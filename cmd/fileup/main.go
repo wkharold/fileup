@@ -2,27 +2,30 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
+	"cloud.google.com/go/pubsub"
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	iam "google.golang.org/api/iam/v1"
+	"google.golang.org/api/option"
 )
 
 type AccessTokenClaimSet struct {
 	Iss   string `json:"iss"`
 	Scope string `json:"scope"`
 	Aud   string `json:"aud"`
-	Exp   string `json:"exp"`
-	Iat   string `json:"iat"`
+	Exp   int64  `json:"exp"`
+	Iat   int64  `json:"iat"`
 }
 
 type FileDesc struct {
@@ -30,6 +33,12 @@ type FileDesc struct {
 	Size int64  `json:"size"`
 	Mode string `json:"mode"`
 }
+
+const (
+	projectid      string = "PROJECT_ID"
+	serviceaccount string = "SERVICE_ACCOUNT"
+	thetopic       string = "TOPIC"
+)
 
 var (
 	filedir = flag.String("filedir", "/tmp/files", "Directory for uploaded files")
@@ -100,6 +109,10 @@ func uploader(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	projid := os.Getenv(projectid)
+	svcacct := os.Getenv(serviceaccount)
+	topic := os.Getenv(thetopic)
+
 	flag.Parse()
 
 	if _, err := os.Stat(*filedir); os.IsNotExist(err) {
@@ -116,20 +129,20 @@ func main() {
 	if err != nil {
 		panic(fmt.Sprintf("unable to get application default credentials: %+v\n", err))
 	}
-	fmt.Printf("obtained HTTP client with application default credentials: %+v\n", client)
 
 	iamsvc, err := iam.New(client)
 	if err != nil {
 		panic(fmt.Sprintf("unable to create iam service: %+v\n", err))
 	}
-	fmt.Printf("created iam service with application default credentials: %+v\n", iamsvc)
+
+	tnow := time.Now()
 
 	claims := &AccessTokenClaimSet{
-		Aud:   "https://accounts.google.com/o/oauth2/token",
-		Exp:   time.Now().Add(time.Duration(24) * time.Hour).String(),
-		Iat:   time.Now().String(),
-		Iss:   "raincreek-fileup-web@raincreek-trading-production.iam.gserviceaccount.com",
-		Scope: iam.CloudPlatformScope + " https://www.googleapis.com/auth/iam",
+		Aud:   "https://www.googleapis.com/oauth2/v4/token",
+		Exp:   tnow.Add(time.Duration(5) * time.Minute).Unix(),
+		Iat:   tnow.Unix(),
+		Iss:   svcacct,
+		Scope: iam.CloudPlatformScope,
 	}
 
 	bs, err := json.Marshal(claims)
@@ -137,21 +150,77 @@ func main() {
 		panic(fmt.Sprintf("unable to marshal access token claims: %+v\n", err))
 	}
 
-	fmt.Println(string(bs))
-
 	psasvc := iam.NewProjectsServiceAccountsService(iamsvc)
-	blobsigner := psasvc.SignBlob(
-		"projects/raincreek-trading-production/serviceAccounts/raincreek-fileup-web@raincreek-trading-production.iam.gserviceaccount.com",
-		&iam.SignBlobRequest{BytesToSign: base64.StdEncoding.EncodeToString(bs)},
+	jwtsigner := psasvc.SignJwt(
+		fmt.Sprintf("projects/%s/serviceAccounts/%s", projid, svcacct),
+		&iam.SignJwtRequest{Payload: string(bs)},
 	)
 
-	blobsigner = blobsigner.Context(ctx)
+	jwtsigner = jwtsigner.Context(ctx)
 
-	resp, err := blobsigner.Do()
+	resp, err := jwtsigner.Do()
 	if err != nil {
 		panic(fmt.Sprintf("unable to sign JWT blob: %+v\n", err))
 	}
-	fmt.Printf("signed the JWT blob: %+v\n", resp)
+
+	tokreq := fmt.Sprintf("grant_type=%s&assertion=%s", url.QueryEscape("urn:ietf:params:oauth:grant-type:jwt-bearer"), url.QueryEscape(resp.SignedJwt))
+
+	httpclient := &http.Client{}
+	req, err := http.NewRequest(
+		"POST",
+		"https://www.googleapis.com/oauth2/v4/token",
+		strings.NewReader(tokreq),
+	)
+	if err != nil {
+		panic(fmt.Sprintf("unable to create access token request: %+v\n", err))
+	}
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+
+	acctok, err := httpclient.Do(req)
+	if err != nil {
+		panic(fmt.Sprintf("unable to retrieve access token: %+v\n", err))
+	}
+
+	body, err := ioutil.ReadAll(acctok.Body)
+	if err != nil {
+		panic(fmt.Sprintf("unable to retrieve access token body: %+v\n", err))
+	}
+
+	var tokfields interface{}
+	err = json.Unmarshal(body, &tokfields)
+	if err != nil {
+		panic(fmt.Sprintf("unmarshaling the access token failed: %+v\n", err))
+	}
+
+	tok := tokfields.(map[string]interface{})["access_token"]
+
+	tk := &oauth2.Token{AccessToken: tok.(string)}
+
+	pc, err := pubsub.NewClient(ctx, projid, option.WithTokenSource(oauth2.StaticTokenSource(tk)))
+	if err != nil {
+		panic(fmt.Sprintf("pubsub client creation failed: %+v\n", err))
+	}
+
+	t := pc.Topic(topic)
+
+	ok, err := t.Exists(ctx)
+	if err != nil {
+		panic(fmt.Sprintf("unable to determine if topic exists: %+v\n", err))
+	}
+
+	if !ok {
+		t, err = pc.CreateTopic(ctx, topic)
+		if err != nil {
+			panic(fmt.Sprintf("pubsub topic creation failed: %+v\n", err))
+		}
+	}
+
+	r := t.Publish(ctx, &pubsub.Message{Data: []byte("testing")})
+	id, err := r.Get(ctx)
+	if err != nil {
+		panic(fmt.Sprintf("unable to publish: %+v\n", err))
+	}
+	fmt.Printf("published message id: %+v\n", id)
 
 	http.HandleFunc("/upload", uploader)
 	http.HandleFunc("/_alive", liveness)
