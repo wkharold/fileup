@@ -4,5 +4,8 @@ RUN apt-get update
 RUN apt-get install -y ca-certificates
 
 COPY gopath/bin/fileup /fileup
+COPY scripts/fileup.sh /fileup.sh
 
-ENTRYPOINT ["/fileup"]
+RUN chmod a+x /fileup.sh
+
+ENTRYPOINT ["/fileup.sh"]
