@@ -1,4 +1,4 @@
 apiVersion: v1
 description: A Helm chart for Kubernetes that deploys a file uploader service
 name: fileup
-version: 0.1.7
+version: 0.2.3

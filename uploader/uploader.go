@@ -3,12 +3,10 @@ package uploader
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
-	"os"
-	"strings"
 
 	"cloud.google.com/go/pubsub"
+	minio "github.com/minio/minio-go"
 	"github.com/wkharold/fileup/satokensource"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -17,22 +15,23 @@ import (
 )
 
 type Uploader struct {
-	client  *pubsub.Client
-	filedir string
-	topic   *pubsub.Topic
+	bucket string
+	client *pubsub.Client
+	mc     *minio.Client
+	topic  *pubsub.Topic
 }
 
 var (
 	ctx = context.Background()
 )
 
-func New(filedir, projectId, serviceAccount, topic string) (*Uploader, error) {
+func New(mc *minio.Client, bucket, projectId, serviceAccount, topic string) (*Uploader, error) {
 	client, err := google.DefaultClient(ctx, iam.CloudPlatformScope, "https://www.googleapis.com/auth/iam")
 	if err != nil {
 		panic(fmt.Sprintf("unable to get application default credentials: %+v\n", err))
 	}
 
-	uploader := &Uploader{filedir: filedir}
+	uploader := &Uploader{bucket: bucket, mc: mc}
 
 	uploader.client, err = pubsub.NewClient(
 		ctx,
@@ -64,23 +63,21 @@ func (ul Uploader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintln(w, "Unable to extract file contents from request: +v", err)
+		fmt.Fprintln(w, "Unable to extract file contents from request: %+v\n", err)
 		return
 	}
 	defer file.Close()
 
-	filenm := strings.Join([]string{ul.filedir, header.Filename}, "/")
-	out, err := os.Create(filenm)
+	n, err := ul.mc.PutObject(ul.bucket, header.Filename, file, "application/octet-stream")
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, "Failed to open the file for writing: %+v", err)
+		fmt.Fprintf(w, "File upload failed: %+v\n", err)
 		return
 	}
-	defer out.Close()
-
-	_, err = io.Copy(out, file)
-	if err != nil {
-		fmt.Fprintln(w, err)
+	if n != header.Size {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, "File upload incomplete: wrote %d wanted %d\n", n, header.Size)
+		return
 	}
 
 	pr := ul.topic.Publish(ctx, &pubsub.Message{Data: []byte("testing")})
@@ -93,5 +90,5 @@ func (ul Uploader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Printf("published message id: %+v\n", id)
 
-	fmt.Fprintf(w, "File %s uploaded successfully.", header.Filename)
+	fmt.Fprintf(w, "File %s uploaded successfully.\n", header.Filename)
 }
