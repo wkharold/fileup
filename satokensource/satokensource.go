@@ -1,6 +1,7 @@
-package main
+package satokensource
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -25,6 +26,18 @@ type ServiceAccountTokenSource struct {
 	client         *http.Client
 	projectId      string
 	serviceAccount string
+}
+
+var (
+	ctx = context.Background()
+)
+
+func New(client *http.Client, projectId, serviceAccount string) *ServiceAccountTokenSource {
+	return &ServiceAccountTokenSource{
+		client:         client,
+		projectId:      projectId,
+		serviceAccount: serviceAccount,
+	}
 }
 
 func (ts ServiceAccountTokenSource) Token() (*oauth2.Token, error) {

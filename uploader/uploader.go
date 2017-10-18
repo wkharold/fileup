@@ -1,44 +1,43 @@
-package main
+package uploader
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
 
 	"cloud.google.com/go/pubsub"
+	"github.com/wkharold/fileup/satokensource"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	iam "google.golang.org/api/iam/v1"
 	"google.golang.org/api/option"
 )
 
-type FileDesc struct {
-	Name string `json:"name"`
-	Size int64  `json:"size"`
-	Mode string `json:"mode"`
-}
-
 type Uploader struct {
-	client *pubsub.Client
-	topic  *pubsub.Topic
+	client  *pubsub.Client
+	filedir string
+	topic   *pubsub.Topic
 }
 
-func NewUploader(projectId, serviceAccount, topic string) (*Uploader, error) {
+var (
+	ctx = context.Background()
+)
+
+func New(filedir, projectId, serviceAccount, topic string) (*Uploader, error) {
 	client, err := google.DefaultClient(ctx, iam.CloudPlatformScope, "https://www.googleapis.com/auth/iam")
 	if err != nil {
 		panic(fmt.Sprintf("unable to get application default credentials: %+v\n", err))
 	}
 
-	uploader := &Uploader{}
+	uploader := &Uploader{filedir: filedir}
 
 	uploader.client, err = pubsub.NewClient(
 		ctx,
 		projectId,
-		option.WithTokenSource(oauth2.ReuseTokenSource(nil, &ServiceAccountTokenSource{client: client, projectId: projectId, serviceAccount: serviceAccount})),
+		option.WithTokenSource(oauth2.ReuseTokenSource(nil, satokensource.New(client, projectId, serviceAccount))),
 	)
 	if err != nil {
 		return nil, err
@@ -70,7 +69,7 @@ func (ul Uploader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	filenm := strings.Join([]string{*filedir, header.Filename}, "/")
+	filenm := strings.Join([]string{ul.filedir, header.Filename}, "/")
 	out, err := os.Create(filenm)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -95,28 +94,4 @@ func (ul Uploader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("published message id: %+v\n", id)
 
 	fmt.Fprintf(w, "File %s uploaded successfully.", header.Filename)
-}
-
-func uploaded(w http.ResponseWriter, r *http.Request) {
-	files, err := ioutil.ReadDir(*filedir)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	result := []FileDesc{}
-
-	for _, f := range files {
-		fd := FileDesc{Name: f.Name(), Size: f.Size(), Mode: f.Mode().String()}
-		result = append(result, fd)
-	}
-
-	bs, err := json.Marshal(result)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintln(w, string(bs))
 }

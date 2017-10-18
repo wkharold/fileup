@@ -2,16 +2,26 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"os"
+
+	"github.com/wkharold/fileup/uploader"
 )
 
 type Env struct {
 	projectId      string
 	serviceAccount string
 	topic          string
+}
+
+type FileDesc struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+	Mode string `json:"mode"`
 }
 
 var (
@@ -32,6 +42,30 @@ func readiness(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.WriteHeader(http.StatusOK)
 	}
+}
+
+func uploaded(w http.ResponseWriter, r *http.Request) {
+	files, err := ioutil.ReadDir(*filedir)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	result := []FileDesc{}
+
+	for _, f := range files {
+		fd := FileDesc{Name: f.Name(), Size: f.Size(), Mode: f.Mode().String()}
+		result = append(result, fd)
+	}
+
+	bs, err := json.Marshal(result)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintln(w, string(bs))
 }
 
 func main() {
@@ -55,7 +89,7 @@ func main() {
 	http.HandleFunc("/_alive", liveness)
 	http.HandleFunc("/_ready", readiness)
 
-	uploader, err := NewUploader(*projectid, *serviceaccount, *topic)
+	uploader, err := uploader.New(*filedir, *projectid, *serviceaccount, *topic)
 	if err != nil {
 		fmt.Printf("uploader creation failed: %+v\n", err)
 		os.Exit(1)
