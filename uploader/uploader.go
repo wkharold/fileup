@@ -3,8 +3,10 @@ package uploader
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 
+	"cloud.google.com/go/logging"
 	"cloud.google.com/go/pubsub"
 	minio "github.com/minio/minio-go"
 	"github.com/wkharold/fileup/satokensource"
@@ -17,6 +19,7 @@ import (
 type Uploader struct {
 	bucket string
 	client *pubsub.Client
+	logger *logging.Logger
 	mc     *minio.Client
 	topic  *pubsub.Topic
 }
@@ -25,18 +28,18 @@ var (
 	ctx = context.Background()
 )
 
-func New(mc *minio.Client, bucket, projectId, serviceAccount, topic string) (*Uploader, error) {
+func New(mc *minio.Client, bucket string, logger *logging.Logger, projectId, serviceAccount, topic string) (*Uploader, error) {
 	client, err := google.DefaultClient(ctx, iam.CloudPlatformScope, "https://www.googleapis.com/auth/iam")
 	if err != nil {
-		panic(fmt.Sprintf("unable to get application default credentials: %+v\n", err))
+		log.Fatalf("unable to get application default credentials: %+v\n", err)
 	}
 
-	uploader := &Uploader{bucket: bucket, mc: mc}
+	uploader := &Uploader{bucket: bucket, logger: logger, mc: mc}
 
 	uploader.client, err = pubsub.NewClient(
 		ctx,
 		projectId,
-		option.WithTokenSource(oauth2.ReuseTokenSource(nil, satokensource.New(client, projectId, serviceAccount))),
+		option.WithTokenSource(oauth2.ReuseTokenSource(nil, satokensource.New(client, logger, projectId, serviceAccount))),
 	)
 	if err != nil {
 		return nil, err
@@ -60,35 +63,96 @@ func New(mc *minio.Client, bucket, projectId, serviceAccount, topic string) (*Up
 }
 
 func (ul Uploader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	defer ul.logger.Flush()
+
 	file, header, err := r.FormFile("file")
 	if err != nil {
+		msg := fmt.Sprintf("Unable to extract file contents from request: %+v\n", err)
+
+		ul.logger.Log(logging.Entry{
+			Payload: struct {
+				Message string
+				Error   string
+			}{
+				Message: msg,
+				Error:   err.Error(),
+			},
+			Severity: logging.Error,
+		})
+
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintln(w, "Unable to extract file contents from request: %+v\n", err)
+		fmt.Fprintln(w, msg)
 		return
 	}
 	defer file.Close()
 
 	n, err := ul.mc.PutObject(ul.bucket, header.Filename, file, "application/octet-stream")
 	if err != nil {
+		msg := fmt.Sprintf("File upload failed: %+v\n", err)
+
+		ul.logger.Log(logging.Entry{
+			Payload: struct {
+				Message string
+				Error   string
+			}{
+				Message: msg,
+				Error:   err.Error(),
+			},
+			Severity: logging.Error,
+		})
+
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, "File upload failed: %+v\n", err)
 		return
 	}
 	if n != header.Size {
+		msg := fmt.Sprintf("File upload incomplete: wrote %d wanted %d\n", n, header.Size)
+
+		ul.logger.Log(logging.Entry{
+			Payload: struct {
+				Message string
+				Error   string
+			}{
+				Message: msg,
+				Error:   err.Error(),
+			},
+			Severity: logging.Error,
+		})
+
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, "File upload incomplete: wrote %d wanted %d\n", n, header.Size)
 		return
 	}
 
 	pr := ul.topic.Publish(ctx, &pubsub.Message{Data: []byte("testing")})
 	id, err := pr.Get(ctx)
 	if err != nil {
+		msg := fmt.Sprintf("Upload notification failed: %+v", err)
+
+		ul.logger.Log(logging.Entry{
+			Payload: struct {
+				Message string
+				Error   string
+			}{
+				Message: msg,
+				Error:   err.Error(),
+			},
+			Severity: logging.Error,
+		})
+
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, "Upload notification failed: %+v", err)
 		// TODO: delete file
 		return
 	}
-	fmt.Printf("published message id: %+v\n", id)
+
+	log.Printf("Published message id: %+v", id)
+
+	ul.logger.Log(logging.Entry{
+		Payload: struct {
+			Message string
+		}{
+			Message: fmt.Sprintf("Published message id: %+v", id),
+		},
+		Severity: logging.Info,
+	})
 
 	fmt.Fprintf(w, "File %s uploaded successfully.\n", header.Filename)
 }

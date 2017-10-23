@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 
+	"cloud.google.com/go/logging"
 	minio "github.com/minio/minio-go"
 	"github.com/wkharold/fileup/uploader"
 )
@@ -29,6 +31,7 @@ const (
 	secretAccessKeyEnvVar = "MINIO_SECRETKEY"
 
 	location = "us-east-1"
+	logname  = "fileup-log"
 	noprefix = ""
 )
 
@@ -40,10 +43,12 @@ var (
 	serviceaccount = flag.String("serviceaccount", "", "Service account to use of publishing (Required)")
 	topic          = flag.String("topic", "", "PubSub topic for notifications (Required)")
 
-	accessKeyId     string
-	bucket          string
-	mc              *minio.Client
-	secretAccessKey string
+	accessKeyId     = mustGetenv(accessKeyIdEnvVar)
+	bucket          = mustGetenv(bucketNameEnvVar)
+	secretAccessKey = mustGetenv(secretAccessKeyEnvVar)
+
+	logger *logging.Logger
+	mc     *minio.Client
 )
 
 func liveness(w http.ResponseWriter, r *http.Request) {
@@ -53,15 +58,13 @@ func liveness(w http.ResponseWriter, r *http.Request) {
 func mustGetenv(name string) string {
 	val := os.Getenv(name)
 	if len(val) == 0 {
-		fmt.Printf("%s must be set", name)
-		os.Exit(1)
+		log.Fatalf("%s must be set", name)
 	}
 	return val
 }
 
 func readiness(w http.ResponseWriter, r *http.Request) {
 	if mc == nil {
-		fmt.Printf("minio client is nil")
 		w.WriteHeader(http.StatusExpectationFailed)
 		return
 	}
@@ -84,7 +87,16 @@ func uploaded(w http.ResponseWriter, r *http.Request) {
 	objects := mc.ListObjectsV2(bucket, noprefix, true, done)
 	for o := range objects {
 		if o.Err != nil {
-			fmt.Printf("problem listing bucket contents: %+v\n", o.Err)
+			logger.Log(logging.Entry{
+				Payload: struct {
+					Message string
+					Error   string
+				}{
+					Message: fmt.Sprintf("Problem listing contents of bucket: %s", bucket),
+					Error:   fmt.Sprintf("%+v", o.Err),
+				},
+				Severity: logging.Info,
+			})
 		} else {
 			fd := FileDesc{Name: o.Key, Size: o.Size}
 			result = append(result, fd)
@@ -93,6 +105,16 @@ func uploaded(w http.ResponseWriter, r *http.Request) {
 
 	bs, err := json.Marshal(result)
 	if err != nil {
+		logger.Log(logging.Entry{
+			Payload: struct {
+				Message string
+				Error   string
+			}{
+				Message: fmt.Sprintf("Could not marshal bucket %s contents list", bucket),
+				Error:   err.Error(),
+			},
+			Severity: logging.Info,
+		})
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -111,26 +133,31 @@ func main() {
 		os.Exit(1)
 	}
 
-	accessKeyId = mustGetenv(accessKeyIdEnvVar)
-	bucket = mustGetenv(bucketNameEnvVar)
-	secretAccessKey = mustGetenv(secretAccessKeyEnvVar)
+	lc, err := logging.NewClient(ctx, *projectid)
+	if err != nil {
+		log.Fatalf("unable to create logging client: %+v\n", err)
+	}
+	defer lc.Close()
+
+	lc.OnError = func(e error) {
+		log.Printf("logging client error: %+v", e)
+	}
+
+	logger = lc.Logger(logname)
 
 	mc, err = minio.New(*filestore, accessKeyId, secretAccessKey, false)
 	if err != nil {
-		fmt.Printf("unable to connect to file store: %+v\n", err)
-		os.Exit(1)
+		log.Fatalf("unable to connect to file store: %+v\n", err)
 	}
 
 	exists, err := mc.BucketExists(bucket)
 	if err != nil {
-		fmt.Printf("file store access error: %s [%+v]\n", bucket, err)
-		os.Exit(1)
+		log.Fatalf("file store access error: %s [%+v]\n", bucket, err)
 	}
 
 	if !exists {
 		if err = mc.MakeBucket(bucket, location); err != nil {
-			fmt.Printf("unable to create bucket: %+v\n", err)
-			os.Exit(1)
+			log.Fatalf("unable to create bucket: %+v\n", err)
 		}
 	}
 
@@ -138,10 +165,9 @@ func main() {
 	http.HandleFunc("/_alive", liveness)
 	http.HandleFunc("/_ready", readiness)
 
-	uploader, err := uploader.New(mc, bucket, *projectid, *serviceaccount, *topic)
+	uploader, err := uploader.New(mc, bucket, logger, *projectid, *serviceaccount, *topic)
 	if err != nil {
-		fmt.Printf("uploader creation failed: %+v\n", err)
-		os.Exit(1)
+		log.Fatalf("uploader creation failed: %+v\n", err)
 	}
 
 	http.Handle("/upload", uploader)
