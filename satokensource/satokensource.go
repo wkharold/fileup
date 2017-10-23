@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/logging"
+	"github.com/wkharold/fileup/sdlog"
 	"golang.org/x/oauth2"
 	iam "google.golang.org/api/iam/v1"
 )
@@ -30,6 +31,10 @@ type ServiceAccountTokenSource struct {
 	serviceAccount string
 }
 
+const (
+	accessTokenTTL = 59
+)
+
 var (
 	ctx = context.Background()
 )
@@ -46,6 +51,7 @@ func New(client *http.Client, logger *logging.Logger, projectId, serviceAccount 
 func (ts ServiceAccountTokenSource) Token() (*oauth2.Token, error) {
 	iamsvc, err := iam.New(ts.client)
 	if err != nil {
+		sdlog.LogError(ts.logger, fmt.Sprintf("Unable to create IAM service using %+v", ts.client), err)
 		return nil, err
 	}
 
@@ -61,6 +67,7 @@ func (ts ServiceAccountTokenSource) Token() (*oauth2.Token, error) {
 
 	bs, err := json.Marshal(claims)
 	if err != nil {
+		sdlog.LogError(ts.logger, fmt.Sprintf("JSON marshalling failed for: %+v", claims), err)
 		return nil, err
 	}
 
@@ -74,17 +81,7 @@ func (ts ServiceAccountTokenSource) Token() (*oauth2.Token, error) {
 
 	signerresp, err := jwtsigner.Do()
 	if err != nil {
-		ts.logger.Log(logging.Entry{
-			Payload: struct {
-				Message string
-				Error   string
-			}{
-				Message: fmt.Sprintf("Failed to sign JWT for %s", ts.serviceAccount),
-				Error:   err.Error(),
-			},
-			Severity: logging.Error,
-		})
-
+		sdlog.LogError(ts.logger, fmt.Sprintf("Failed to sign JWT for %s", ts.serviceAccount), err)
 		return nil, err
 	}
 
@@ -97,17 +94,7 @@ func (ts ServiceAccountTokenSource) Token() (*oauth2.Token, error) {
 		strings.NewReader(tokreq),
 	)
 	if err != nil {
-		ts.logger.Log(logging.Entry{
-			Payload: struct {
-				Message string
-				Error   string
-			}{
-				Message: fmt.Sprintf("Unable to create POST request for OAuth2 access token"),
-				Error:   err.Error(),
-			},
-			Severity: logging.Error,
-		})
-
+		sdlog.LogError(ts.logger, fmt.Sprint("Unable to create POST request for OAuth2 access token"), err)
 		return nil, err
 	}
 
@@ -115,79 +102,31 @@ func (ts ServiceAccountTokenSource) Token() (*oauth2.Token, error) {
 
 	resp, err := httpclient.Do(req)
 	if err != nil {
-		ts.logger.Log(logging.Entry{
-			Payload: struct {
-				Message string
-				Error   string
-			}{
-				Message: fmt.Sprintf("OAuth2 access token request failed"),
-				Error:   err.Error(),
-			},
-			Severity: logging.Error,
-		})
-
+		sdlog.LogError(ts.logger, fmt.Sprint("OAuth2 access token request failed"), err)
 		return nil, err
 	}
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		ts.logger.Log(logging.Entry{
-			Payload: struct {
-				Message string
-				Error   string
-			}{
-				Message: fmt.Sprintf("Unable to read body of response to OAuth2 access token request"),
-				Error:   err.Error(),
-			},
-			Severity: logging.Error,
-		})
-
+		sdlog.LogError(ts.logger, fmt.Sprint("Unable to read body of response to OAuth2 access token request"), err)
 		return nil, err
 	}
 
 	var fields interface{}
 	err = json.Unmarshal(body, &fields)
 	if err != nil {
-		ts.logger.Log(logging.Entry{
-			Payload: struct {
-				Message string
-				Error   string
-			}{
-				Message: fmt.Sprintf("Unable to unmarshal the fields of the response to OAuth2 access token request"),
-				Error:   err.Error(),
-			},
-			Severity: logging.Error,
-		})
-
+		sdlog.LogError(ts.logger, fmt.Sprint("Unable to unmarshal the fields of the response to OAuth2 access token request"), err)
 		return nil, err
 	}
 
 	acctok := fields.(map[string]interface{})["access_token"]
 	if acctok == nil || len(acctok.(string)) == 0 {
 		err = fmt.Errorf("empty access token field")
-
-		ts.logger.Log(logging.Entry{
-			Payload: struct {
-				Message string
-				Error   string
-			}{
-				Message: fmt.Sprintf("OAuth2 access token is nil"),
-				Error:   err.Error(),
-			},
-			Severity: logging.Error,
-		})
-
+		sdlog.LogError(ts.logger, fmt.Sprint("OAuth2 access token is missing"), err)
 		return nil, err
 	}
 
-	ts.logger.Log(logging.Entry{
-		Payload: struct {
-			Message string
-		}{
-			Message: fmt.Sprintf("Received an OAuth2 access token for: %s", ts.serviceAccount),
-		},
-		Severity: logging.Info,
-	})
+	sdlog.LogInfo(ts.logger, fmt.Sprintf("Received an OAuth2 access token for: %s", ts.serviceAccount))
 
-	return &oauth2.Token{AccessToken: acctok.(string)}, nil
+	return &oauth2.Token{AccessToken: acctok.(string), Expiry: time.Now().Add(time.Duration(accessTokenTTL) * time.Minute)}, nil
 }

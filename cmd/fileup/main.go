@@ -11,6 +11,7 @@ import (
 
 	"cloud.google.com/go/logging"
 	minio "github.com/minio/minio-go"
+	"github.com/wkharold/fileup/sdlog"
 	"github.com/wkharold/fileup/uploader"
 )
 
@@ -87,34 +88,17 @@ func uploaded(w http.ResponseWriter, r *http.Request) {
 	objects := mc.ListObjectsV2(bucket, noprefix, true, done)
 	for o := range objects {
 		if o.Err != nil {
-			logger.Log(logging.Entry{
-				Payload: struct {
-					Message string
-					Error   string
-				}{
-					Message: fmt.Sprintf("Problem listing contents of bucket: %s", bucket),
-					Error:   fmt.Sprintf("%+v", o.Err),
-				},
-				Severity: logging.Info,
-			})
-		} else {
-			fd := FileDesc{Name: o.Key, Size: o.Size}
-			result = append(result, fd)
+			sdlog.LogInfo(logger, fmt.Sprintf("Problem listing contents of bucket %s [%+v]", bucket, o.Err))
+			continue
 		}
+
+		fd := FileDesc{Name: o.Key, Size: o.Size}
+		result = append(result, fd)
 	}
 
 	bs, err := json.Marshal(result)
 	if err != nil {
-		logger.Log(logging.Entry{
-			Payload: struct {
-				Message string
-				Error   string
-			}{
-				Message: fmt.Sprintf("Could not marshal bucket %s contents list", bucket),
-				Error:   err.Error(),
-			},
-			Severity: logging.Info,
-		})
+		sdlog.LogError(logger, fmt.Sprintf("Could not marshal bucket %s contents list", bucket), err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}

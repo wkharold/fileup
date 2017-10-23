@@ -10,6 +10,7 @@ import (
 	"cloud.google.com/go/pubsub"
 	minio "github.com/minio/minio-go"
 	"github.com/wkharold/fileup/satokensource"
+	"github.com/wkharold/fileup/sdlog"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	iam "google.golang.org/api/iam/v1"
@@ -18,7 +19,6 @@ import (
 
 type Uploader struct {
 	bucket string
-	client *pubsub.Client
 	logger *logging.Logger
 	mc     *minio.Client
 	topic  *pubsub.Topic
@@ -34,27 +34,30 @@ func New(mc *minio.Client, bucket string, logger *logging.Logger, projectId, ser
 		log.Fatalf("unable to get application default credentials: %+v\n", err)
 	}
 
-	uploader := &Uploader{bucket: bucket, logger: logger, mc: mc}
+	uploader := &Uploader{
+		bucket: bucket,
+		logger: logger,
+		mc:     mc,
+	}
 
-	uploader.client, err = pubsub.NewClient(
-		ctx,
-		projectId,
-		option.WithTokenSource(oauth2.ReuseTokenSource(nil, satokensource.New(client, logger, projectId, serviceAccount))),
-	)
+	pc, err := pubsub.NewClient(ctx, projectId, option.WithTokenSource(oauth2.ReuseTokenSource(nil, satokensource.New(client, logger, projectId, serviceAccount))))
 	if err != nil {
+		sdlog.LogError(logger, fmt.Sprintf("Unable to create PubSub client for project: %s", projectId), err)
 		return nil, err
 	}
 
-	uploader.topic = uploader.client.Topic(topic)
+	uploader.topic = pc.Topic(topic)
 
 	ok, err := uploader.topic.Exists(ctx)
 	if err != nil {
+		sdlog.LogError(logger, fmt.Sprintf("Unable to determine if pubsub topic %s exists", topic), err)
 		return nil, err
 	}
 
 	if !ok {
-		uploader.topic, err = uploader.client.CreateTopic(ctx, topic)
+		uploader.topic, err = pc.CreateTopic(ctx, topic)
 		if err != nil {
+			sdlog.LogError(logger, fmt.Sprintf("Unable to create pubsub topic %s exists", topic), err)
 			return nil, err
 		}
 	}
@@ -67,92 +70,51 @@ func (ul Uploader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		msg := fmt.Sprintf("Unable to extract file contents from request: %+v\n", err)
+		msg := fmt.Sprint("Unable to extract file contents from request")
 
-		ul.logger.Log(logging.Entry{
-			Payload: struct {
-				Message string
-				Error   string
-			}{
-				Message: msg,
-				Error:   err.Error(),
-			},
-			Severity: logging.Error,
-		})
+		sdlog.LogError(ul.logger, msg, err)
 
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintln(w, msg)
+		fmt.Fprintln(w, "%s [%+v]", msg, err)
 		return
 	}
 	defer file.Close()
 
 	n, err := ul.mc.PutObject(ul.bucket, header.Filename, file, "application/octet-stream")
 	if err != nil {
-		msg := fmt.Sprintf("File upload failed: %+v\n", err)
+		msg := fmt.Sprintf("File upload failed")
 
-		ul.logger.Log(logging.Entry{
-			Payload: struct {
-				Message string
-				Error   string
-			}{
-				Message: msg,
-				Error:   err.Error(),
-			},
-			Severity: logging.Error,
-		})
+		sdlog.LogError(ul.logger, msg, err)
 
 		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, "%s [%+v]", msg, err)
 		return
 	}
 	if n != header.Size {
-		msg := fmt.Sprintf("File upload incomplete: wrote %d wanted %d\n", n, header.Size)
+		msg := fmt.Sprintf("File upload incomplete")
+		err = fmt.Errorf("wrote %d wanted %d", n, header.Size)
 
-		ul.logger.Log(logging.Entry{
-			Payload: struct {
-				Message string
-				Error   string
-			}{
-				Message: msg,
-				Error:   err.Error(),
-			},
-			Severity: logging.Error,
-		})
+		sdlog.LogError(ul.logger, msg, err)
 
 		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, "%s [%+v]", msg, err)
 		return
 	}
 
 	pr := ul.topic.Publish(ctx, &pubsub.Message{Data: []byte("testing")})
 	id, err := pr.Get(ctx)
 	if err != nil {
-		msg := fmt.Sprintf("Upload notification failed: %+v", err)
+		msg := fmt.Sprintf("Upload notifcation failed for topic %s", ul.topic.ID())
 
-		ul.logger.Log(logging.Entry{
-			Payload: struct {
-				Message string
-				Error   string
-			}{
-				Message: msg,
-				Error:   err.Error(),
-			},
-			Severity: logging.Error,
-		})
+		sdlog.LogError(ul.logger, msg, err)
 
 		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, "%s [%+v]", msg, err)
 		// TODO: delete file
 		return
 	}
 
-	log.Printf("Published message id: %+v", id)
-
-	ul.logger.Log(logging.Entry{
-		Payload: struct {
-			Message string
-		}{
-			Message: fmt.Sprintf("Published message id: %+v", id),
-		},
-		Severity: logging.Info,
-	})
+	sdlog.LogInfo(ul.logger, fmt.Sprintf("Published message id: %+v", id))
 
 	fmt.Fprintf(w, "File %s uploaded successfully.\n", header.Filename)
 }
