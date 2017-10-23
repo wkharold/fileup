@@ -126,7 +126,7 @@ func (ts ServiceAccountTokenSource) Token() (*oauth2.Token, error) {
 		return nil, err
 	}
 
-	sdlog.LogInfo(ts.logger, fmt.Sprintf("Received an OAuth2 access token for: %s", ts.serviceAccount))
+	sdlog.LogInfo(ts.logger, fmt.Sprintf("Retrieved an OAuth2 access token for: %s", ts.serviceAccount))
 
 	return &oauth2.Token{AccessToken: acctok.(string), Expiry: time.Now().Add(time.Duration(accessTokenTTL) * time.Minute)}, nil
 }
