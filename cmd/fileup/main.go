@@ -153,7 +153,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("uploader creation failed: %+v\n", err)
 	}
-
 	http.Handle("/upload", uploader)
 
 	http.ListenAndServe(":8080", nil)
