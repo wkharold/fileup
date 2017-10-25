@@ -101,7 +101,7 @@ func (ul Uploader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pr := ul.topic.Publish(ctx, &pubsub.Message{Data: []byte("testing")})
+	pr := ul.topic.Publish(ctx, &pubsub.Message{Data: []byte(fmt.Sprintf("%s/%s", ul.bucket, header.Filename))})
 	id, err := pr.Get(ctx)
 	if err != nil {
 		msg := fmt.Sprintf("Upload notifcation failed for topic %s", ul.topic.ID())

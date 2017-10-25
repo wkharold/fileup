@@ -1,0 +1,8 @@
+steps:
+- name: 'gcr.io/cloud-builders/go'
+  args: ['install', '-ldflags', "'-w'", './cmd/recognizer']
+  env: ["PROJECT_ROOT=github.com/wkharold/fileup", "CGO_ENABLED=0", "GOOS=linux"]
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '--file', 'containers/Dockerfile.recognizer', '--tag=gcr.io/$PROJECT_ID/recognizer', '.']
+
+images: ['gcr.io/$PROJECT_ID/recognizer']
