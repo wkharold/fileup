@@ -3,7 +3,6 @@ package recognizer
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -24,8 +23,14 @@ type Recognizer struct {
 	logger *logging.Logger
 	iac    *vision.ImageAnnotatorClient
 	mc     *minio.Client
+	pc     *pubsub.Client
 	sub    *pubsub.Subscription
 }
+
+const (
+	catsTopic   = "cats"
+	nocatsTopic = "nocats"
+)
 
 var (
 	ctx = context.Background()
@@ -49,16 +54,14 @@ func New(logger *logging.Logger, mc *minio.Client, projectId, serviceAccount, to
 		return nil, err
 	}
 
-	pc, err := pubsub.NewClient(ctx, projectId, ts)
+	recognizer.pc, err = pubsub.NewClient(ctx, projectId, ts)
 	if err != nil {
 		return nil, err
 	}
 
-	t := pc.Topic(topic)
-
 	sid := fmt.Sprintf("%s%%%s", projectId, topic)
 
-	recognizer.sub = pc.Subscription(sid)
+	recognizer.sub = recognizer.pc.Subscription(sid)
 
 	ok, err := recognizer.sub.Exists(ctx)
 	if err != nil {
@@ -66,8 +69,8 @@ func New(logger *logging.Logger, mc *minio.Client, projectId, serviceAccount, to
 	}
 
 	if !ok {
-		recognizer.sub, err = pc.CreateSubscription(ctx, sid, pubsub.SubscriptionConfig{
-			Topic:       t,
+		recognizer.sub, err = recognizer.pc.CreateSubscription(ctx, sid, pubsub.SubscriptionConfig{
+			Topic:       recognizer.pc.Topic(topic),
 			AckDeadline: 60 * time.Second,
 		})
 		if err != nil {
@@ -83,33 +86,75 @@ func (r Recognizer) ReceiveAndProcess(ctx context.Context) {
 		defer m.Ack()
 
 		mparts := strings.Split(string(m.Data), "/")
-
-		obj, err := r.mc.GetObject(mparts[0], mparts[1])
-		if err != nil {
-			sdlog.LogError(r.logger, fmt.Sprintf("Unable to retrieve %s", string(m.Data)), err)
+		if len(mparts) != 2 {
+			sdlog.LogError(r.logger, "Bad message", fmt.Errorf("Message must have format <bucket/image> [%s]", string(m.Data)))
 			return
 		}
 
-		img, err := vision.NewImageFromReader(obj)
+		ok, err := r.isCat(mparts[0], mparts[1])
 		if err != nil {
-			sdlog.LogError(r.logger, fmt.Sprintf("Unable to read %s", string(m.Data)), err)
+			sdlog.LogError(r.logger, fmt.Sprintf("Unable to recognize %s", string(m.Data)), err)
 			return
 		}
 
-		res, err := r.iac.AnnotateImage(ctx, &vpb.AnnotateImageRequest{
-			Image: img,
-			Features: []*vpb.Feature{
-				{Type: vpb.Feature_LABEL_DETECTION, MaxResults: 3},
-			},
-		})
-		if err != nil {
-			sdlog.LogError(r.logger, fmt.Sprintf("Unable to annotate image %s", string(m.Data)), err)
+		if !ok {
+			if err = sendNotification(r.pc, r.logger, nocatsTopic, string(m.Data)); err != nil {
+				sdlog.LogError(r.logger, "Unable to send notification", err)
+			}
 			return
 		}
 
-		log.Printf("Annotation result for %s: %+v", string(m.Data), res)
+		if err = sendNotification(r.pc, r.logger, catsTopic, string(m.Data)); err != nil {
+			sdlog.LogError(r.logger, "Unable to send notification", err)
+		}
 	})
 	if err != context.Canceled {
 		sdlog.LogError(r.logger, fmt.Sprintf("Unable to receive from %s", r.sub.ID()), err)
 	}
+}
+
+func (r Recognizer) isCat(bucket, image string) (bool, error) {
+	obj, err := r.mc.GetObject(bucket, image)
+	if err != nil {
+		return false, err
+	}
+
+	img, err := vision.NewImageFromReader(obj)
+	if err != nil {
+		return false, err
+	}
+
+	res, err := r.iac.AnnotateImage(ctx, &vpb.AnnotateImageRequest{
+		Image: img,
+		Features: []*vpb.Feature{
+			{Type: vpb.Feature_LABEL_DETECTION, MaxResults: 3},
+		},
+	})
+	if err != nil {
+		return false, err
+	}
+
+	for _, ea := range res.LabelAnnotations {
+		if strings.Contains(ea.Description, "cat") {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func sendNotification(pc *pubsub.Client, logger *logging.Logger, topic, location string) error {
+	t := pc.Topic(topic)
+
+	msg := &pubsub.Message{Data: []byte(location)}
+
+	pr := t.Publish(ctx, msg)
+	id, err := pr.Get(ctx)
+	if err != nil {
+		return fmt.Errorf("Unable publish to send notification to topic %s [%+v]", topic, err)
+	}
+
+	sdlog.LogInfo(logger, fmt.Sprintf("published message %s to topic %s [%s]", id, topic, string(msg.Data)))
+
+	return nil
 }
