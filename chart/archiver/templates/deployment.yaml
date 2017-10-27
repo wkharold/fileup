@@ -1,0 +1,66 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: {{ template "fullname" . }}
+  labels:
+    app: {{ template "name" . }}
+    chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  template:
+    metadata:
+      labels:
+        app: {{ template "name" . }}
+        release: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: {{ .Values.image.args }}
+          ports:
+            - containerPort: {{ .Values.service.internalPort }}
+          env:
+            - name: ARCHIVE_TOPIC
+              value: {{ required "Must specify an archive topic" .Values.archivetopic }}
+            - name: BUCKET
+              value: {{ required "Must specify a bucket" .Values.bucket }}
+            - name: PROJECT_ID
+              value: {{ required "Must specify a project ID" .Values.projectId }}
+            - name: SERVICE_ACCOUNT
+              value: {{ required "Must specify a service account" .Values.serviceAccount }}
+            - name: PURGE_TOPIC
+              value: {{ required "Must specify a purge topic" .Values.purgetopic }}
+            - name: MINIO_ENDPOINT
+              value: {{ required "Must specify a minio endpoint" .Values.minioEndpoint }}
+            - name: MINIO_ACCESSKEYID
+              valueFrom:
+                  secretKeyRef:
+                      name: minio-secrets
+                      key: accessKeyId
+            - name: MINIO_BUCKET
+              valueFrom:
+                  secretKeyRef:
+                      name: minio-secrets
+                      key: bucketName
+            - name: MINIO_SECRETKEY
+              valueFrom:
+                  secretKeyRef:
+                      name: minio-secrets
+                      key: secretAccessKey
+          livenessProbe:
+            httpGet:
+              path: /_alive
+              port: {{ .Values.service.internalPort }}
+          readinessProbe:
+            httpGet:
+              path: /_ready
+              port: {{ .Values.service.internalPort }}
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+    {{- if .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml .Values.nodeSelector | indent 8 }}
+    {{- end }}

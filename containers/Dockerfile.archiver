@@ -1,0 +1,11 @@
+FROM debian:9.1
+
+RUN apt-get update  
+RUN apt-get install -y ca-certificates
+
+COPY gopath/bin/archiver /archiver
+COPY scripts/archiver.sh /archiver.sh
+
+RUN chmod a+x /archiver.sh
+
+ENTRYPOINT ["/archiver.sh"]

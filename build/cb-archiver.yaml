@@ -1,0 +1,8 @@
+steps:
+- name: 'gcr.io/cloud-builders/go'
+  args: ['install', '-ldflags', "'-w'", './cmd/archiver']
+  env: ["PROJECT_ROOT=github.com/wkharold/fileup", "CGO_ENABLED=0", "GOOS=linux"]
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '--file', 'containers/Dockerfile.archiver', '--tag=gcr.io/$PROJECT_ID/archiver', '.']
+
+images: ['gcr.io/$PROJECT_ID/archiver']
