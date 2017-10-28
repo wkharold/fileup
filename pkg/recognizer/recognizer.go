@@ -6,12 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"cloud.google.com/go/logging"
 	"cloud.google.com/go/pubsub"
 	vision "cloud.google.com/go/vision/apiv1"
 	minio "github.com/minio/minio-go"
-	"github.com/wkharold/fileup/satokensource"
-	"github.com/wkharold/fileup/sdlog"
+	"github.com/wkharold/fileup/pkg/satokensource"
+	"github.com/wkharold/fileup/pkg/sdlog"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	iam "google.golang.org/api/iam/v1"
@@ -20,7 +19,7 @@ import (
 )
 
 type Recognizer struct {
-	logger *logging.Logger
+	logger *sdlog.StackdriverLogger
 	iac    *vision.ImageAnnotatorClient
 	mc     *minio.Client
 	pc     *pubsub.Client
@@ -34,7 +33,7 @@ var (
 	ctx = context.Background()
 )
 
-func New(logger *logging.Logger, mc *minio.Client, projectId, serviceAccount, imageTopic, purgeTopic, recognizedTopic, targetLabel string) (*Recognizer, error) {
+func New(logger *sdlog.StackdriverLogger, mc *minio.Client, projectId, serviceAccount, imageTopic, purgeTopic, recognizedTopic, targetLabel string) (*Recognizer, error) {
 	client, err := google.DefaultClient(ctx, iam.CloudPlatformScope, "https://www.googleapis.com/auth/iam")
 	if err != nil {
 		return nil, err
@@ -88,29 +87,29 @@ func (r Recognizer) ReceiveAndProcess(ctx context.Context) {
 
 		mparts := strings.Split(string(m.Data), "/")
 		if len(mparts) != 2 {
-			sdlog.LogError(r.logger, "Bad message", fmt.Errorf("Message must have format <bucket/image> [%s]", string(m.Data)))
+			r.logger.LogError("Bad message", fmt.Errorf("Message must have format <bucket/image> [%s]", string(m.Data)))
 			return
 		}
 
 		ok, err := r.isRecognized(mparts[0], mparts[1], r.tl)
 		if err != nil {
-			sdlog.LogError(r.logger, fmt.Sprintf("Unable to recognize %s", string(m.Data)), err)
+			r.logger.LogError(fmt.Sprintf("Unable to recognize %s", string(m.Data)), err)
 			return
 		}
 
 		if !ok {
 			if err = sendNotification(r.pc, r.logger, r.pt, string(m.Data)); err != nil {
-				sdlog.LogError(r.logger, "Unable to send notification", err)
+				r.logger.LogError("Unable to send notification", err)
 			}
 			return
 		}
 
 		if err = sendNotification(r.pc, r.logger, r.rt, string(m.Data)); err != nil {
-			sdlog.LogError(r.logger, "Unable to send notification", err)
+			r.logger.LogError("Unable to send notification", err)
 		}
 	})
 	if err != context.Canceled {
-		sdlog.LogError(r.logger, fmt.Sprintf("Unable to receive from %s", r.sub.ID()), err)
+		r.logger.LogError(fmt.Sprintf("Unable to receive from %s", r.sub.ID()), err)
 	}
 }
 
@@ -144,7 +143,7 @@ func (r Recognizer) isRecognized(bucket, image, label string) (bool, error) {
 	return false, nil
 }
 
-func sendNotification(pc *pubsub.Client, logger *logging.Logger, topic, location string) error {
+func sendNotification(pc *pubsub.Client, logger *sdlog.StackdriverLogger, topic, location string) error {
 	t := pc.Topic(topic)
 
 	msg := &pubsub.Message{Data: []byte(location)}
@@ -155,7 +154,7 @@ func sendNotification(pc *pubsub.Client, logger *logging.Logger, topic, location
 		return fmt.Errorf("Unable publish to send notification to topic %s [%+v]", topic, err)
 	}
 
-	sdlog.LogInfo(logger, fmt.Sprintf("published message %s to topic %s [%s]", id, topic, string(msg.Data)))
+	logger.LogInfo(fmt.Sprintf("published message %s to topic %s [%s]", id, topic, string(msg.Data)))
 
 	return nil
 }

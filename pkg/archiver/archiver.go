@@ -7,12 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"cloud.google.com/go/logging"
 	"cloud.google.com/go/pubsub"
 	"cloud.google.com/go/storage"
 	minio "github.com/minio/minio-go"
-	"github.com/wkharold/fileup/satokensource"
-	"github.com/wkharold/fileup/sdlog"
+	"github.com/wkharold/fileup/pkg/satokensource"
+	"github.com/wkharold/fileup/pkg/sdlog"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	iam "google.golang.org/api/iam/v1"
@@ -21,7 +20,7 @@ import (
 
 type Archiver struct {
 	bucket string
-	logger *logging.Logger
+	logger *sdlog.StackdriverLogger
 	mc     *minio.Client
 	pt     *pubsub.Topic
 	sc     *storage.Client
@@ -32,7 +31,7 @@ var (
 	ctx = context.Background()
 )
 
-func New(logger *logging.Logger, mc *minio.Client, projectId, serviceAccount, bucket, archivetopic, purgetopic string) (*Archiver, error) {
+func New(logger *sdlog.StackdriverLogger, mc *minio.Client, projectId, serviceAccount, bucket, archivetopic, purgetopic string) (*Archiver, error) {
 	client, err := google.DefaultClient(ctx, iam.CloudPlatformScope, "https://www.googleapis.com/auth/iam")
 	if err != nil {
 		return nil, err
@@ -71,7 +70,7 @@ func (a Archiver) ReceiveAndProcess(ctx context.Context) {
 
 		mparts := strings.Split(string(m.Data), "/")
 		if len(mparts) != 2 {
-			sdlog.LogError(a.logger, "Bad message", fmt.Errorf("Message must have format <bucket/image> [%s]", string(m.Data)))
+			a.logger.LogError("Bad message", fmt.Errorf("Message must have format <bucket/image> [%s]", string(m.Data)))
 			return
 		}
 
@@ -80,23 +79,23 @@ func (a Archiver) ReceiveAndProcess(ctx context.Context) {
 
 		obj, err := a.mc.GetObject(mparts[0], mparts[1])
 		if err != nil {
-			sdlog.LogError(a.logger, fmt.Sprintf("Unable to get object from local store: %s/%s", mparts[0], mparts[1]), err)
+			a.logger.LogError(fmt.Sprintf("Unable to get object from local store: %s/%s", mparts[0], mparts[1]), err)
 			return
 		}
 
 		bs, err := ioutil.ReadAll(obj)
 		if err != nil {
-			sdlog.LogError(a.logger, fmt.Sprintf("Unable to read object from local store: %s/%s", mparts[0], mparts[1]), err)
+			a.logger.LogError(fmt.Sprintf("Unable to read object from local store: %s/%s", mparts[0], mparts[1]), err)
 			return
 		}
 
 		if _, err := wc.Write(bs); err != nil {
-			sdlog.LogError(a.logger, fmt.Sprintf("Unable to write: %s/%s", a.bucket, mparts[1]), err)
+			a.logger.LogError(fmt.Sprintf("Unable to write: %s/%s", a.bucket, mparts[1]), err)
 			return
 		}
 
 		if err = wc.Close(); err != nil {
-			sdlog.LogError(a.logger, "Write failure", err)
+			a.logger.LogError("Write failure", err)
 			return
 		}
 
@@ -104,12 +103,12 @@ func (a Archiver) ReceiveAndProcess(ctx context.Context) {
 
 		pr := a.pt.Publish(ctx, msg)
 		if _, err = pr.Get(ctx); err != nil {
-			sdlog.LogError(a.logger, fmt.Sprintf("Could not send purge notification: %s", string(msg.Data)), err)
+			a.logger.LogError(fmt.Sprintf("Could not send purge notification: %s", string(msg.Data)), err)
 			return
 		}
 	})
 	if err != context.Canceled {
-		sdlog.LogError(a.logger, fmt.Sprintf("Unable to receive from %s", a.sub.ID()), err)
+		a.logger.LogError(fmt.Sprintf("Unable to receive from %s", a.sub.ID()), err)
 	}
 }
 

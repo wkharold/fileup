@@ -9,10 +9,10 @@ import (
 	"net/http"
 	"os"
 
-	"cloud.google.com/go/logging"
 	minio "github.com/minio/minio-go"
-	"github.com/wkharold/fileup/sdlog"
-	"github.com/wkharold/fileup/uploader"
+	"github.com/wkharold/fileup/pkg/cmd"
+	"github.com/wkharold/fileup/pkg/sdlog"
+	"github.com/wkharold/fileup/pkg/uploader"
 )
 
 type Env struct {
@@ -44,40 +44,13 @@ var (
 	serviceaccount = flag.String("serviceaccount", "", "Service account to use of publishing (Required)")
 	topic          = flag.String("topic", "", "PubSub topic for notifications (Required)")
 
-	accessKeyId     = mustGetenv(accessKeyIdEnvVar)
-	bucket          = mustGetenv(bucketNameEnvVar)
-	secretAccessKey = mustGetenv(secretAccessKeyEnvVar)
+	accessKeyId     = cmd.MustGetenv(accessKeyIdEnvVar)
+	bucket          = cmd.MustGetenv(bucketNameEnvVar)
+	secretAccessKey = cmd.MustGetenv(secretAccessKeyEnvVar)
 
-	logger *logging.Logger
+	logger *sdlog.StackdriverLogger
 	mc     *minio.Client
 )
-
-func liveness(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-}
-
-func mustGetenv(name string) string {
-	val := os.Getenv(name)
-	if len(val) == 0 {
-		log.Fatalf("%s must be set", name)
-	}
-	return val
-}
-
-func readiness(w http.ResponseWriter, r *http.Request) {
-	if mc == nil {
-		w.WriteHeader(http.StatusExpectationFailed)
-		return
-	}
-
-	exists, err := mc.BucketExists(bucket)
-	if err != nil || !exists {
-		w.WriteHeader(http.StatusExpectationFailed)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
 
 func uploaded(w http.ResponseWriter, r *http.Request) {
 	done := make(chan struct{})
@@ -88,7 +61,7 @@ func uploaded(w http.ResponseWriter, r *http.Request) {
 	objects := mc.ListObjectsV2(bucket, noprefix, true, done)
 	for o := range objects {
 		if o.Err != nil {
-			sdlog.LogInfo(logger, fmt.Sprintf("Problem listing contents of bucket %s [%+v]", bucket, o.Err))
+			logger.LogInfo(fmt.Sprintf("Problem listing contents of bucket %s [%+v]", bucket, o.Err))
 			continue
 		}
 
@@ -98,7 +71,7 @@ func uploaded(w http.ResponseWriter, r *http.Request) {
 
 	bs, err := json.Marshal(result)
 	if err != nil {
-		sdlog.LogError(logger, fmt.Sprintf("Could not marshal bucket %s contents list", bucket), err)
+		logger.LogError(fmt.Sprintf("Could not marshal bucket %s contents list", bucket), err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -117,17 +90,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	lc, err := logging.NewClient(ctx, *projectid)
+	logger, err := sdlog.Logger(*projectid, logname)
 	if err != nil {
-		log.Fatalf("unable to create logging client: %+v\n", err)
+		log.Fatalf("unable to create Stackdriver logger [%+v]", err)
 	}
-	defer lc.Close()
-
-	lc.OnError = func(e error) {
-		log.Printf("logging client error: %+v", e)
-	}
-
-	logger = lc.Logger(logname)
 
 	mc, err = minio.New(*filestore, accessKeyId, secretAccessKey, false)
 	if err != nil {
@@ -146,8 +112,8 @@ func main() {
 	}
 
 	http.HandleFunc("/uploaded", uploaded)
-	http.HandleFunc("/_alive", liveness)
-	http.HandleFunc("/_ready", readiness)
+	http.HandleFunc("/_alive", cmd.Liveness)
+	http.HandleFunc("/_ready", cmd.Readiness(mc, bucket))
 
 	uploader, err := uploader.New(mc, bucket, logger, *projectid, *serviceaccount, *topic)
 	if err != nil {

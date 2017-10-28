@@ -10,8 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"cloud.google.com/go/logging"
-	"github.com/wkharold/fileup/sdlog"
+	"github.com/wkharold/fileup/pkg/sdlog"
 	"golang.org/x/oauth2"
 	iam "google.golang.org/api/iam/v1"
 )
@@ -26,7 +25,7 @@ type AccessTokenClaimSet struct {
 
 type ServiceAccountTokenSource struct {
 	client         *http.Client
-	logger         *logging.Logger
+	logger         *sdlog.StackdriverLogger
 	projectId      string
 	serviceAccount string
 }
@@ -40,7 +39,7 @@ var (
 	ctx = context.Background()
 )
 
-func New(client *http.Client, logger *logging.Logger, projectId, serviceAccount string) *ServiceAccountTokenSource {
+func New(client *http.Client, logger *sdlog.StackdriverLogger, projectId, serviceAccount string) *ServiceAccountTokenSource {
 	return &ServiceAccountTokenSource{
 		client:         client,
 		logger:         logger,
@@ -126,17 +125,17 @@ func requestAccessToken(tokreq string) (*oauth2.Token, error) {
 func (ts ServiceAccountTokenSource) Token() (*oauth2.Token, error) {
 	tokreq, err := createTokenRequest(ts.client, ts.projectId, ts.serviceAccount)
 	if err != nil {
-		sdlog.LogError(ts.logger, "Access token reqest creation failed", err)
+		ts.logger.LogError("Access token reqest creation failed", err)
 		return nil, err
 	}
 
 	tok, err := requestAccessToken(tokreq)
 	if err != nil {
-		sdlog.LogError(ts.logger, fmt.Sprint("Access token request failed"), err)
+		ts.logger.LogError(fmt.Sprint("Access token request failed"), err)
 		return nil, err
 	}
 
-	sdlog.LogInfo(ts.logger, fmt.Sprintf("Retrieved an OAuth2 access token for: %s", ts.serviceAccount))
+	ts.logger.LogInfo(fmt.Sprintf("Retrieved an OAuth2 access token for: %s", ts.serviceAccount))
 
 	return tok, nil
 }

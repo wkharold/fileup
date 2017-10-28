@@ -9,7 +9,9 @@ import (
 
 	"cloud.google.com/go/logging"
 	minio "github.com/minio/minio-go"
-	"github.com/wkharold/fileup/archiver"
+	"github.com/wkharold/fileup/pkg/archiver"
+	"github.com/wkharold/fileup/pkg/cmd"
+	"github.com/wkharold/fileup/pkg/sdlog"
 )
 
 const (
@@ -32,40 +34,13 @@ var (
 	purgetopic     = flag.String("purgetopic", "", "PubSub topic for upload purge notifications (Required)")
 	serviceaccount = flag.String("serviceaccount", "", "Service account to use of publishing (Required)")
 
-	accessKeyId     = mustGetenv(accessKeyIdEnvVar)
-	miniobucket     = mustGetenv(bucketNameEnvVar)
-	secretAccessKey = mustGetenv(secretAccessKeyEnvVar)
+	accessKeyId     = cmd.MustGetenv(accessKeyIdEnvVar)
+	miniobucket     = cmd.MustGetenv(bucketNameEnvVar)
+	secretAccessKey = cmd.MustGetenv(secretAccessKeyEnvVar)
 
 	logger *logging.Logger
 	mc     *minio.Client
 )
-
-func liveness(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-}
-
-func mustGetenv(name string) string {
-	val := os.Getenv(name)
-	if len(val) == 0 {
-		log.Fatalf("%s must be set", name)
-	}
-	return val
-}
-
-func readiness(w http.ResponseWriter, r *http.Request) {
-	if mc == nil {
-		w.WriteHeader(http.StatusExpectationFailed)
-		return
-	}
-
-	exists, err := mc.BucketExists(miniobucket)
-	if err != nil || !exists {
-		w.WriteHeader(http.StatusExpectationFailed)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
 
 func main() {
 	flag.Parse()
@@ -75,17 +50,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	lc, err := logging.NewClient(ctx, *projectid)
+	logger, err := sdlog.Logger(*projectid, logname)
 	if err != nil {
-		log.Fatalf("unable to create logging client: %+v\n", err)
+		log.Fatalf("unable to create Stackdriver logger [%+v]", err)
 	}
-	defer lc.Close()
-
-	lc.OnError = func(e error) {
-		log.Printf("logging client error: %+v", e)
-	}
-
-	logger = lc.Logger(logname)
 
 	mc, err = minio.New(*filestore, accessKeyId, secretAccessKey, false)
 	if err != nil {
@@ -98,8 +66,8 @@ func main() {
 	}
 
 	go func() {
-		http.HandleFunc("/_alive", liveness)
-		http.HandleFunc("/_ready", readiness)
+		http.HandleFunc("/_alive", cmd.Liveness)
+		http.HandleFunc("/_ready", cmd.Readiness(mc, miniobucket))
 
 		http.ListenAndServe(":8080", nil)
 	}()

@@ -6,11 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"cloud.google.com/go/logging"
 	"cloud.google.com/go/pubsub"
 	minio "github.com/minio/minio-go"
-	"github.com/wkharold/fileup/satokensource"
-	"github.com/wkharold/fileup/sdlog"
+	"github.com/wkharold/fileup/pkg/satokensource"
+	"github.com/wkharold/fileup/pkg/sdlog"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	iam "google.golang.org/api/iam/v1"
@@ -18,7 +17,7 @@ import (
 )
 
 type Purger struct {
-	logger *logging.Logger
+	logger *sdlog.StackdriverLogger
 	mc     *minio.Client
 	sub    *pubsub.Subscription
 }
@@ -27,7 +26,7 @@ var (
 	ctx = context.Background()
 )
 
-func New(logger *logging.Logger, mc *minio.Client, projectId, serviceAccount, purgeTopic string) (*Purger, error) {
+func New(logger *sdlog.StackdriverLogger, mc *minio.Client, projectId, serviceAccount, purgeTopic string) (*Purger, error) {
 	client, err := google.DefaultClient(ctx, iam.CloudPlatformScope, "https://www.googleapis.com/auth/iam")
 	if err != nil {
 		return nil, err
@@ -73,18 +72,18 @@ func (p Purger) ReceiveAndProcess(ctx context.Context) {
 
 		mparts := strings.Split(string(m.Data), "/")
 		if len(mparts) != 2 {
-			sdlog.LogError(p.logger, "Bad message", fmt.Errorf("Message must have format <bucket>/<image> [%s]", string(m.Data)))
+			p.logger.LogError("Bad message", fmt.Errorf("Message must have format <bucket>/<image> [%s]", string(m.Data)))
 			return
 		}
 
 		if err := p.mc.RemoveObject(mparts[0], mparts[1]); err != nil {
-			sdlog.LogError(p.logger, fmt.Sprintf("Could not remove local image %s", string(m.Data)), err)
+			p.logger.LogError(fmt.Sprintf("Could not remove local image %s", string(m.Data)), err)
 			return
 		}
 
-		sdlog.LogInfo(p.logger, fmt.Sprintf("Removed local image %s", string(m.Data)))
+		p.logger.LogInfo(fmt.Sprintf("Removed local image %s", string(m.Data)))
 	})
 	if err != context.Canceled {
-		sdlog.LogError(p.logger, fmt.Sprintf("Unable to receive from %s", p.sub.ID()), err)
+		p.logger.LogError(fmt.Sprintf("Unable to receive from %s", p.sub.ID()), err)
 	}
 }
