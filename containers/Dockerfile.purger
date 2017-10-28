@@ -1,0 +1,11 @@
+FROM debian:9.1
+
+RUN apt-get update  
+RUN apt-get install -y ca-certificates
+
+COPY gopath/bin/purger /purger
+COPY scripts/purger.sh /purger.sh
+
+RUN chmod a+x /purger.sh
+
+ENTRYPOINT ["/purger.sh"]
