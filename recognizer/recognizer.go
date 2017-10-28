@@ -24,19 +24,17 @@ type Recognizer struct {
 	iac    *vision.ImageAnnotatorClient
 	mc     *minio.Client
 	pc     *pubsub.Client
+	pt     string
+	rt     string
 	sub    *pubsub.Subscription
+	tl     string
 }
-
-const (
-	catsTopic   = "cats"
-	nocatsTopic = "nocats"
-)
 
 var (
 	ctx = context.Background()
 )
 
-func New(logger *logging.Logger, mc *minio.Client, projectId, serviceAccount, topic string) (*Recognizer, error) {
+func New(logger *logging.Logger, mc *minio.Client, projectId, serviceAccount, imageTopic, purgeTopic, recognizedTopic, targetLabel string) (*Recognizer, error) {
 	client, err := google.DefaultClient(ctx, iam.CloudPlatformScope, "https://www.googleapis.com/auth/iam")
 	if err != nil {
 		return nil, err
@@ -45,6 +43,9 @@ func New(logger *logging.Logger, mc *minio.Client, projectId, serviceAccount, to
 	recognizer := &Recognizer{
 		logger: logger,
 		mc:     mc,
+		pt:     purgeTopic,
+		rt:     recognizedTopic,
+		tl:     targetLabel,
 	}
 
 	ts := option.WithTokenSource(oauth2.ReuseTokenSource(nil, satokensource.New(client, logger, projectId, serviceAccount)))
@@ -59,7 +60,7 @@ func New(logger *logging.Logger, mc *minio.Client, projectId, serviceAccount, to
 		return nil, err
 	}
 
-	sid := fmt.Sprintf("%s%%%s", projectId, topic)
+	sid := fmt.Sprintf("%s%%%s", projectId, imageTopic)
 
 	recognizer.sub = recognizer.pc.Subscription(sid)
 
@@ -70,7 +71,7 @@ func New(logger *logging.Logger, mc *minio.Client, projectId, serviceAccount, to
 
 	if !ok {
 		recognizer.sub, err = recognizer.pc.CreateSubscription(ctx, sid, pubsub.SubscriptionConfig{
-			Topic:       recognizer.pc.Topic(topic),
+			Topic:       recognizer.pc.Topic(imageTopic),
 			AckDeadline: 60 * time.Second,
 		})
 		if err != nil {
@@ -91,20 +92,20 @@ func (r Recognizer) ReceiveAndProcess(ctx context.Context) {
 			return
 		}
 
-		ok, err := r.isCat(mparts[0], mparts[1])
+		ok, err := r.isRecognized(mparts[0], mparts[1], r.tl)
 		if err != nil {
 			sdlog.LogError(r.logger, fmt.Sprintf("Unable to recognize %s", string(m.Data)), err)
 			return
 		}
 
 		if !ok {
-			if err = sendNotification(r.pc, r.logger, nocatsTopic, string(m.Data)); err != nil {
+			if err = sendNotification(r.pc, r.logger, r.pt, string(m.Data)); err != nil {
 				sdlog.LogError(r.logger, "Unable to send notification", err)
 			}
 			return
 		}
 
-		if err = sendNotification(r.pc, r.logger, catsTopic, string(m.Data)); err != nil {
+		if err = sendNotification(r.pc, r.logger, r.rt, string(m.Data)); err != nil {
 			sdlog.LogError(r.logger, "Unable to send notification", err)
 		}
 	})
@@ -113,7 +114,7 @@ func (r Recognizer) ReceiveAndProcess(ctx context.Context) {
 	}
 }
 
-func (r Recognizer) isCat(bucket, image string) (bool, error) {
+func (r Recognizer) isRecognized(bucket, image, label string) (bool, error) {
 	obj, err := r.mc.GetObject(bucket, image)
 	if err != nil {
 		return false, err
@@ -135,7 +136,7 @@ func (r Recognizer) isCat(bucket, image string) (bool, error) {
 	}
 
 	for _, ea := range res.LabelAnnotations {
-		if strings.Contains(ea.Description, "cat") {
+		if strings.Contains(ea.Description, label) {
 			return true, nil
 		}
 	}

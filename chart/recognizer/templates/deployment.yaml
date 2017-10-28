@@ -23,12 +23,18 @@ spec:
           ports:
             - containerPort: {{ .Values.service.internalPort }}
           env:
+            - name: IMAGE_TOPIC
+              value: {{ default "image" .Values.imageTopic }}
             - name: PROJECT_ID
               value: {{ required "Must specify a project ID" .Values.projectId }}
+            - name: PURGE_TOPIC
+              value: {{ default "purge" .Values.purgeTopic }}
+            - name: RECOGNIZED_TOPIC
+              value: {{ required "Must specify a topic" .Values.recognizedTopic }}
             - name: SERVICE_ACCOUNT
               value: {{ required "Must specify a service account" .Values.serviceAccount }}
-            - name: TOPIC
-              value: {{ required "Must specify a topic" .Values.topic }}
+            - name: TARGET_LABEL
+              value: {{ default "cat" .Values.targetLabel }}
             - name: MINIO_ENDPOINT
               value: {{ required "Must specify a minio endpoint" .Values.minioEndpoint }}
             - name: MINIO_ACCESSKEYID
