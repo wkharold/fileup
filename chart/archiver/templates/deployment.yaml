@@ -32,7 +32,7 @@ spec:
             - name: SERVICE_ACCOUNT
               value: {{ required "Must specify a service account" .Values.serviceAccount }}
             - name: PURGE_TOPIC
-              value: {{ required "Must specify a purge topic" .Values.purgetopic }}
+              value: {{ default "purge" .Values.purgetopic }}
             - name: MINIO_ENDPOINT
               value: {{ required "Must specify a minio endpoint" .Values.minioEndpoint }}
             - name: MINIO_ACCESSKEYID
