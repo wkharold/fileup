@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"strings"
 	"time"
 
@@ -67,8 +66,6 @@ func New(logger *logging.Logger, mc *minio.Client, projectId, serviceAccount, bu
 }
 
 func (a Archiver) ReceiveAndProcess(ctx context.Context) {
-	log.Printf("Receive and process PubSub messages")
-
 	err := a.sub.Receive(ctx, func(ctx context.Context, m *pubsub.Message) {
 		defer m.Ack()
 
@@ -77,8 +74,6 @@ func (a Archiver) ReceiveAndProcess(ctx context.Context) {
 			sdlog.LogError(a.logger, "Bad message", fmt.Errorf("Message must have format <bucket/image> [%s]", string(m.Data)))
 			return
 		}
-
-		log.Printf("Upload %s/%s to %s/%s", mparts[0], mparts[1], a.bucket, mparts[1])
 
 		wc := a.sc.Bucket(a.bucket).Object(mparts[1]).NewWriter(ctx)
 		wc.ContentType = "application/octet-stream"
@@ -104,8 +99,6 @@ func (a Archiver) ReceiveAndProcess(ctx context.Context) {
 			sdlog.LogError(a.logger, "Write failure", err)
 			return
 		}
-
-		log.Printf("Request purging of %s/%s", mparts[0], mparts[1])
 
 		msg := &pubsub.Message{Data: []byte(fmt.Sprintf("%s/%s", mparts[0], mparts[1]))}
 
