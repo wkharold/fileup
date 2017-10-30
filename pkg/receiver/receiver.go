@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"cloud.google.com/go/pubsub"
 	minio "github.com/minio/minio-go"
@@ -23,9 +24,34 @@ type Receiver struct {
 	topic  *pubsub.Topic
 }
 
+const (
+	noprefix = ""
+)
+
 var (
 	ctx = context.Background()
 )
+
+func purgeOldObjects(mc *minio.Client, logger *sdlog.StackdriverLogger, bucket string) {
+	done := make(chan struct{})
+	defer close(done)
+
+	now := time.Now()
+
+	for obj := range mc.ListObjectsV2(bucket, noprefix, true, done) {
+		if obj.Err != nil {
+			logger.LogError(fmt.Sprintf("Problem listing contents of bucket %s", bucket), obj.Err)
+			continue
+		}
+
+		if now.Sub(obj.LastModified) > (time.Minute * 5) {
+			if err := mc.RemoveObject(bucket, obj.Key); err != nil {
+				logger.LogError(fmt.Sprintf("Unable to remove %s/%s from local storage", bucket, obj.Key), err)
+			}
+			log.Printf("removed %s/%s", bucket, obj.Key)
+		}
+	}
+}
 
 func New(mc *minio.Client, bucket string, logger *sdlog.StackdriverLogger, projectId, serviceAccount, topic string) (*Receiver, error) {
 	client, err := google.DefaultClient(ctx, iam.CloudPlatformScope, "https://www.googleapis.com/auth/iam")
@@ -61,15 +87,17 @@ func New(mc *minio.Client, bucket string, logger *sdlog.StackdriverLogger, proje
 		}
 	}
 
+	go purgeOldObjects(mc, logger, bucket)
+
 	return receiver, nil
 }
 
-func (ul Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	file, header, err := r.FormFile("file")
+func (r Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	file, header, err := req.FormFile("file")
 	if err != nil {
 		msg := fmt.Sprint("Unable to extract file contents from request")
 
-		ul.logger.LogError(msg, err)
+		r.logger.LogError(msg, err)
 
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintln(w, "%s [%+v]", msg, err)
@@ -77,11 +105,11 @@ func (ul Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	n, err := ul.mc.PutObject(ul.bucket, header.Filename, file, "application/octet-stream")
+	n, err := r.mc.PutObject(r.bucket, header.Filename, file, "application/octet-stream")
 	if err != nil {
 		msg := fmt.Sprintf("File upload failed")
 
-		ul.logger.LogError(msg, err)
+		r.logger.LogError(msg, err)
 
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprint(w, "%s [%+v]", msg, err)
@@ -91,27 +119,26 @@ func (ul Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		msg := fmt.Sprintf("File upload incomplete")
 		err = fmt.Errorf("wrote %d wanted %d", n, header.Size)
 
-		ul.logger.LogError(msg, err)
+		r.logger.LogError(msg, err)
 
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprint(w, "%s [%+v]", msg, err)
 		return
 	}
 
-	pr := ul.topic.Publish(ctx, &pubsub.Message{Data: []byte(fmt.Sprintf("%s/%s", ul.bucket, header.Filename))})
+	pr := r.topic.Publish(ctx, &pubsub.Message{Data: []byte(fmt.Sprintf("%s/%s", r.bucket, header.Filename))})
 	id, err := pr.Get(ctx)
 	if err != nil {
-		msg := fmt.Sprintf("Received notifcation failed for topic %s", ul.topic.ID())
+		msg := fmt.Sprintf("Received notifcation failed for topic %s", r.topic.ID())
 
-		ul.logger.LogError(msg, err)
+		r.logger.LogError(msg, err)
 
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(w, "%s [%+v]", msg, err)
-		// TODO: delete file
 		return
 	}
 
-	ul.logger.LogInfo(fmt.Sprintf("Published message id: %+v", id))
+	r.logger.LogInfo(fmt.Sprintf("Published message id: %+v", id))
 
 	fmt.Fprintf(w, "File %s uploaded successfully.\n", header.Filename)
 }

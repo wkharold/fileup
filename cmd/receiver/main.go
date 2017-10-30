@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -52,32 +51,21 @@ var (
 	mc     *minio.Client
 )
 
-func received(w http.ResponseWriter, r *http.Request) {
+func preStop(w http.ResponseWriter, r *http.Request) {
 	done := make(chan struct{})
 	defer close(done)
 
-	result := []FileDesc{}
-
-	objects := mc.ListObjectsV2(bucket, noprefix, true, done)
-	for o := range objects {
-		if o.Err != nil {
-			logger.LogInfo(fmt.Sprintf("Problem listing contents of bucket %s [%+v]", bucket, o.Err))
+	for obj := range mc.ListObjectsV2(bucket, noprefix, true, done) {
+		if obj.Err != nil {
+			logger.LogError(fmt.Sprintf("Problem listing contents of bucket %s", bucket), obj.Err)
 			continue
 		}
-
-		fd := FileDesc{Name: o.Key, Size: o.Size}
-		result = append(result, fd)
+		mc.RemoveObject(bucket, obj.Key)
 	}
 
-	bs, err := json.Marshal(result)
-	if err != nil {
-		logger.LogError(fmt.Sprintf("Could not marshal bucket %s contents list", bucket), err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+	if err := mc.RemoveBucket(bucket); err != nil {
+		logger.LogError(fmt.Sprintf("Unable to remove local storage bucket %s", bucket), err)
 	}
-
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintln(w, string(bs))
 }
 
 func main() {
@@ -111,7 +99,7 @@ func main() {
 		}
 	}
 
-	http.HandleFunc("/received", received)
+	http.HandleFunc("/_prestop", preStop)
 	http.HandleFunc("/_alive", cmd.Liveness)
 	http.HandleFunc("/_ready", cmd.Readiness(mc, bucket))
 
