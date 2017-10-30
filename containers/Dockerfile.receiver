@@ -1,0 +1,11 @@
+FROM debian:9.1
+
+RUN apt-get update  
+RUN apt-get install -y ca-certificates
+
+COPY gopath/bin/receiver /receiver
+COPY scripts/receiver.sh /receiver.sh
+
+RUN chmod a+x /receiver.sh
+
+ENTRYPOINT ["/receiver.sh"]

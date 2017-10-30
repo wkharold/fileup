@@ -1,8 +1,0 @@
-steps:
-- name: 'gcr.io/cloud-builders/go'
-  args: ['install', '-ldflags', "'-w'", './cmd/fileup']
-  env: ["PROJECT_ROOT=github.com/wkharold/fileup", "CGO_ENABLED=0", "GOOS=linux"]
-- name: 'gcr.io/cloud-builders/docker'
-  args: ['build', '--file', 'containers/Dockerfile.fileup', '--tag=gcr.io/$PROJECT_ID/fileup', '.']
-
-images: ['gcr.io/$PROJECT_ID/fileup']

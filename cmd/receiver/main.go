@@ -11,8 +11,8 @@ import (
 
 	minio "github.com/minio/minio-go"
 	"github.com/wkharold/fileup/pkg/cmd"
+	"github.com/wkharold/fileup/pkg/receiver"
 	"github.com/wkharold/fileup/pkg/sdlog"
-	"github.com/wkharold/fileup/pkg/uploader"
 )
 
 type Env struct {
@@ -32,7 +32,7 @@ const (
 	secretAccessKeyEnvVar = "MINIO_SECRETKEY"
 
 	location = "us-east-1"
-	logname  = "fileup-log"
+	logname  = "receiver_log"
 	noprefix = ""
 )
 
@@ -52,7 +52,7 @@ var (
 	mc     *minio.Client
 )
 
-func uploaded(w http.ResponseWriter, r *http.Request) {
+func received(w http.ResponseWriter, r *http.Request) {
 	done := make(chan struct{})
 	defer close(done)
 
@@ -111,15 +111,15 @@ func main() {
 		}
 	}
 
-	http.HandleFunc("/uploaded", uploaded)
+	http.HandleFunc("/received", received)
 	http.HandleFunc("/_alive", cmd.Liveness)
 	http.HandleFunc("/_ready", cmd.Readiness(mc, bucket))
 
-	uploader, err := uploader.New(mc, bucket, logger, *projectid, *serviceaccount, *topic)
+	receiver, err := receiver.New(mc, bucket, logger, *projectid, *serviceaccount, *topic)
 	if err != nil {
-		log.Fatalf("uploader creation failed: %+v\n", err)
+		log.Fatalf("receiver creation failed: %+v\n", err)
 	}
-	http.Handle("/upload", uploader)
+	http.Handle("/receive", receiver)
 
 	http.ListenAndServe(":8080", nil)
 }

@@ -1,4 +1,4 @@
-package uploader
+package receiver
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 	"google.golang.org/api/option"
 )
 
-type Uploader struct {
+type Receiver struct {
 	bucket string
 	logger *sdlog.StackdriverLogger
 	mc     *minio.Client
@@ -27,13 +27,13 @@ var (
 	ctx = context.Background()
 )
 
-func New(mc *minio.Client, bucket string, logger *sdlog.StackdriverLogger, projectId, serviceAccount, topic string) (*Uploader, error) {
+func New(mc *minio.Client, bucket string, logger *sdlog.StackdriverLogger, projectId, serviceAccount, topic string) (*Receiver, error) {
 	client, err := google.DefaultClient(ctx, iam.CloudPlatformScope, "https://www.googleapis.com/auth/iam")
 	if err != nil {
 		log.Fatalf("unable to get application default credentials: %+v\n", err)
 	}
 
-	uploader := &Uploader{
+	receiver := &Receiver{
 		bucket: bucket,
 		logger: logger,
 		mc:     mc,
@@ -45,26 +45,26 @@ func New(mc *minio.Client, bucket string, logger *sdlog.StackdriverLogger, proje
 		return nil, err
 	}
 
-	uploader.topic = pc.Topic(topic)
+	receiver.topic = pc.Topic(topic)
 
-	ok, err := uploader.topic.Exists(ctx)
+	ok, err := receiver.topic.Exists(ctx)
 	if err != nil {
 		logger.LogError(fmt.Sprintf("Unable to determine if pubsub topic %s exists", topic), err)
 		return nil, err
 	}
 
 	if !ok {
-		uploader.topic, err = pc.CreateTopic(ctx, topic)
+		receiver.topic, err = pc.CreateTopic(ctx, topic)
 		if err != nil {
 			logger.LogError(fmt.Sprintf("Unable to create pubsub topic %s exists", topic), err)
 			return nil, err
 		}
 	}
 
-	return uploader, nil
+	return receiver, nil
 }
 
-func (ul Uploader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (ul Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		msg := fmt.Sprint("Unable to extract file contents from request")
@@ -101,7 +101,7 @@ func (ul Uploader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	pr := ul.topic.Publish(ctx, &pubsub.Message{Data: []byte(fmt.Sprintf("%s/%s", ul.bucket, header.Filename))})
 	id, err := pr.Get(ctx)
 	if err != nil {
-		msg := fmt.Sprintf("Upload notifcation failed for topic %s", ul.topic.ID())
+		msg := fmt.Sprintf("Received notifcation failed for topic %s", ul.topic.ID())
 
 		ul.logger.LogError(msg, err)
 
