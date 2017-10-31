@@ -21,6 +21,11 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: {{ .Values.service.internalPort }}
+          lifecycle:
+            preStop:
+              httpGet:
+                  path: /_prestop
+                  port: {{ .Values.service.internalPort }}
           env:
             - name: PROJECT_ID
               value: {{ required "Must specify a project ID" .Values.projectId }}

@@ -22,6 +22,11 @@ spec:
           args: {{ .Values.image.args }}
           ports:
             - containerPort: {{ .Values.service.internalPort }}
+          lifecycle:
+            preStop:
+              httpGet:
+                  path: /_prestop
+                  port: {{ .Values.service.internalPort }}
           env:
             - name: IMAGE_TOPIC
               value: {{ default "images" .Values.imageTopic }}

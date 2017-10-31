@@ -51,7 +51,7 @@ var (
 	mc     *minio.Client
 )
 
-func preStop(w http.ResponseWriter, r *http.Request) {
+func prestop(w http.ResponseWriter, r *http.Request) {
 	done := make(chan struct{})
 	defer close(done)
 
@@ -114,7 +114,7 @@ func main() {
 		}
 	}
 
-	http.HandleFunc("/_prestop", preStop)
+	http.HandleFunc("/_prestop", prestop)
 	http.HandleFunc("/_alive", cmd.Liveness)
 	http.HandleFunc("/_ready", readiness)
 

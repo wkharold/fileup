@@ -38,6 +38,8 @@ func purgeOldObjects(mc *minio.Client, logger *sdlog.StackdriverLogger, bucket s
 
 	now := time.Now()
 
+	log.Printf("Purging old objects @ %+v", now)
+
 	for obj := range mc.ListObjectsV2(bucket, noprefix, true, done) {
 		if obj.Err != nil {
 			logger.LogError(fmt.Sprintf("Problem listing contents of bucket %s", bucket), obj.Err)
@@ -87,7 +89,12 @@ func New(mc *minio.Client, bucket string, logger *sdlog.StackdriverLogger, proje
 		}
 	}
 
-	go purgeOldObjects(mc, logger, bucket)
+	go func() {
+		ticker := time.NewTicker(time.Minute * 5)
+		for _ = range ticker.C {
+			purgeOldObjects(mc, logger, bucket)
+		}
+	}()
 
 	return receiver, nil
 }

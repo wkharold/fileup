@@ -3,14 +3,21 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 
+	"cloud.google.com/go/pubsub"
 	minio "github.com/minio/minio-go"
 	"github.com/wkharold/fileup/pkg/cmd"
 	"github.com/wkharold/fileup/pkg/labeler"
+	"github.com/wkharold/fileup/pkg/satokensource"
 	"github.com/wkharold/fileup/pkg/sdlog"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	iam "google.golang.org/api/iam/v1"
+	"google.golang.org/api/option"
 )
 
 const (
@@ -40,6 +47,33 @@ var (
 	mc     *minio.Client
 )
 
+func prestop(w http.ResponseWriter, r *http.Request) {
+	client, err := google.DefaultClient(ctx, iam.CloudPlatformScope, "https://www.googleapis.com/auth/iam")
+	if err != nil {
+		logger.LogError("Unable to get application default client", err)
+		return
+	}
+
+	ts := option.WithTokenSource(oauth2.ReuseTokenSource(nil, satokensource.New(client, logger, *projectid, *serviceaccount)))
+
+	pc, err := pubsub.NewClient(ctx, *projectid, ts)
+	if err != nil {
+		logger.LogError("Unable to create PubSub client", err)
+		return
+	}
+
+	sub := pc.Subscription(*imagetopic)
+
+	ok, err := sub.Exists(ctx)
+	if err != nil {
+		logger.LogError(fmt.Sprintf("Unable to determine if subscription %s exists", *imagetopic), err)
+	} else if ok {
+		if err = sub.Delete(ctx); err != nil {
+			logger.LogError(fmt.Sprintf("Unable to delete subcription %s", *imagetopic), err)
+		}
+	}
+}
+
 func main() {
 	flag.Parse()
 
@@ -48,7 +82,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger, err := sdlog.Logger(*projectid, logname)
+	var err error
+
+	logger, err = sdlog.Logger(*projectid, logname)
 	if err != nil {
 		log.Fatalf("unable to create Stackdriver logger [%+v]", err)
 	}
@@ -65,6 +101,7 @@ func main() {
 
 	go func() {
 		http.HandleFunc("/_alive", cmd.Liveness)
+		http.HandleFunc("/_prestop", prestop)
 		http.HandleFunc("/_ready", cmd.Readiness)
 
 		http.ListenAndServe(":8080", nil)
