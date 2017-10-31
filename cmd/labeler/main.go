@@ -7,10 +7,9 @@ import (
 	"net/http"
 	"os"
 
-	"cloud.google.com/go/logging"
 	minio "github.com/minio/minio-go"
-	"github.com/wkharold/fileup/pkg/archiver"
 	"github.com/wkharold/fileup/pkg/cmd"
+	"github.com/wkharold/fileup/pkg/labeler"
 	"github.com/wkharold/fileup/pkg/sdlog"
 )
 
@@ -20,32 +19,31 @@ const (
 	secretAccessKeyEnvVar = "MINIO_SECRETKEY"
 
 	location = "us-east-1"
-	logname  = "archiver_log"
+	logname  = "labeler_log"
 	noprefix = ""
 )
 
 var (
 	ctx = context.Background()
 
-	archivetopic   = flag.String("archivetopic", "", "PubSub topic for archive notifications (Required)")
-	bucket         = flag.String("bucket", "", "Cloud storage archive bucket (Required)")
 	filestore      = flag.String("filestore", "", "Endpoint for uploaded files (Required)")
+	imagetopic     = flag.String("imagetopic", "images", "PubSub topic for new image notifications")
+	labeledtopic   = flag.String("labeledtopic", "labeled", "PubSub topic for new label notifications")
 	projectid      = flag.String("projectid", "", "Project Id of the project hosting the application (Required)")
-	purgetopic     = flag.String("purgetopic", "", "PubSub topic for upload purge notifications (Required)")
 	serviceaccount = flag.String("serviceaccount", "", "Service account to use of publishing (Required)")
 
 	accessKeyId     = cmd.MustGetenv(accessKeyIdEnvVar)
-	miniobucket     = cmd.MustGetenv(bucketNameEnvVar)
+	bucket          = cmd.MustGetenv(bucketNameEnvVar)
 	secretAccessKey = cmd.MustGetenv(secretAccessKeyEnvVar)
 
-	logger *logging.Logger
+	logger *sdlog.StackdriverLogger
 	mc     *minio.Client
 )
 
 func main() {
 	flag.Parse()
 
-	if len(*archivetopic) == 0 || len(*bucket) == 0 || len(*filestore) == 0 || len(*projectid) == 0 || len(*purgetopic) == 0 || len(*serviceaccount) == 0 {
+	if len(*filestore) == 0 || len(*projectid) == 0 || len(*serviceaccount) == 0 {
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
@@ -60,9 +58,9 @@ func main() {
 		log.Fatalf("unable to connect to file store: %+v\n", err)
 	}
 
-	archiver, err := archiver.New(logger, mc, *projectid, *serviceaccount, *bucket, *archivetopic, *purgetopic)
+	labeler, err := labeler.New(logger, mc, *projectid, *serviceaccount, *imagetopic, *labeledtopic)
 	if err != nil {
-		log.Fatalf("recognizer creation failed [%+v]", err)
+		log.Fatalf("labeler creation failed [%+v]", err)
 	}
 
 	go func() {
@@ -72,5 +70,5 @@ func main() {
 		http.ListenAndServe(":8080", nil)
 	}()
 
-	archiver.ReceiveAndProcess(ctx)
+	labeler.ReceiveAndProcess(ctx)
 }

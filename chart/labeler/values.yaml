@@ -1,13 +1,13 @@
-# Default values for recognizer.
+# Default values for labeler.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 replicaCount: 1
 image:
-  repository: gcr.io/raincreek-trading-production/recognizer
+  repository: gcr.io/raincreek-trading-production/labeler
   tag: latest
   pullPolicy: Always
 service:
-  name: recognizer
+  name: labeler
   type: ClusterIP
   externalPort: 8080
   internalPort: 8080
@@ -15,7 +15,7 @@ ingress:
   enabled: false
   # Used to create Ingress record (should used with service.type: ClusterIP).
   hosts:
-    - recognizer.raincreek.net
+    - labeler.raincreek.net
   annotations:
     # kubernetes.io/ingress.class: nginx
     # kubernetes.io/tls-acme: "true"

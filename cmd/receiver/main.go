@@ -68,6 +68,21 @@ func preStop(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func readiness(w http.ResponseWriter, r *http.Request) {
+	if mc == nil {
+		w.WriteHeader(http.StatusExpectationFailed)
+		return
+	}
+
+	exists, err := mc.BucketExists(bucket)
+	if err != nil || !exists {
+		w.WriteHeader(http.StatusExpectationFailed)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
 func main() {
 	var err error
 
@@ -101,7 +116,7 @@ func main() {
 
 	http.HandleFunc("/_prestop", preStop)
 	http.HandleFunc("/_alive", cmd.Liveness)
-	http.HandleFunc("/_ready", cmd.Readiness(mc, bucket))
+	http.HandleFunc("/_ready", readiness)
 
 	receiver, err := receiver.New(mc, bucket, logger, *projectid, *serviceaccount, *topic)
 	if err != nil {

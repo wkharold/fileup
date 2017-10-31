@@ -27,7 +27,7 @@ spec:
             - name: SERVICE_ACCOUNT
               value: {{ required "Must specify a service account" .Values.serviceAccount }}
             - name: TOPIC
-              value: {{ required "Must specify a topic" .Values.topic }}
+              value: {{ default "images" .Values.topic }}
             - name: MINIO_BUCKET
               valueFrom:
                   fieldRef:

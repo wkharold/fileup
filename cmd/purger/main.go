@@ -65,7 +65,7 @@ func main() {
 
 	go func() {
 		http.HandleFunc("/_alive", cmd.Liveness)
-		http.HandleFunc("/_ready", cmd.Readiness(mc, bucket))
+		http.HandleFunc("/_ready", cmd.Readiness)
 
 		http.ListenAndServe(":8080", nil)
 	}()
