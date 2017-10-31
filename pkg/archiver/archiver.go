@@ -2,8 +2,10 @@ package archiver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"strings"
 	"time"
 
@@ -20,9 +22,9 @@ import (
 
 type Archiver struct {
 	bucket string
+	label  string
 	logger *sdlog.StackdriverLogger
 	mc     *minio.Client
-	pt     *pubsub.Topic
 	sc     *storage.Client
 	sub    *pubsub.Subscription
 }
@@ -31,7 +33,7 @@ var (
 	ctx = context.Background()
 )
 
-func New(logger *sdlog.StackdriverLogger, mc *minio.Client, projectId, serviceAccount, bucket, archivetopic, purgetopic string) (*Archiver, error) {
+func New(logger *sdlog.StackdriverLogger, mc *minio.Client, projectId, serviceAccount, bucket, labeledTopic, subcription, targetlabel string) (*Archiver, error) {
 	client, err := google.DefaultClient(ctx, iam.CloudPlatformScope, "https://www.googleapis.com/auth/iam")
 	if err != nil {
 		return nil, err
@@ -39,6 +41,7 @@ func New(logger *sdlog.StackdriverLogger, mc *minio.Client, projectId, serviceAc
 
 	archiver := &Archiver{
 		bucket: bucket,
+		label:  targetlabel,
 		logger: logger,
 		mc:     mc,
 	}
@@ -55,9 +58,7 @@ func New(logger *sdlog.StackdriverLogger, mc *minio.Client, projectId, serviceAc
 		return nil, err
 	}
 
-	archiver.pt = pc.Topic(purgetopic)
-
-	if archiver.sub, err = subscribe(pc, projectId, archivetopic); err != nil {
+	if archiver.sub, err = subscribe(pc, subcription, labeledTopic); err != nil {
 		return nil, err
 	}
 
@@ -66,45 +67,22 @@ func New(logger *sdlog.StackdriverLogger, mc *minio.Client, projectId, serviceAc
 
 func (a Archiver) ReceiveAndProcess(ctx context.Context) {
 	err := a.sub.Receive(ctx, func(ctx context.Context, m *pubsub.Message) {
+		log.Printf("message data: %+v", string(m.Data))
 		defer m.Ack()
 
-		mparts := strings.Split(string(m.Data), "/")
-		if len(mparts) != 2 {
-			a.logger.LogError("Bad message", fmt.Errorf("Message must have format <bucket/image> [%s]", string(m.Data)))
-			return
-		}
-
-		wc := a.sc.Bucket(a.bucket).Object(mparts[1]).NewWriter(ctx)
-		wc.ContentType = "application/octet-stream"
-
-		obj, err := a.mc.GetObject(mparts[0], mparts[1])
+		bucket, object, labels, err := parseMessage(m.Data)
 		if err != nil {
-			a.logger.LogError(fmt.Sprintf("Unable to get object from local store: %s/%s", mparts[0], mparts[1]), err)
+			a.logger.LogError("Bad message", err)
 			return
 		}
 
-		bs, err := ioutil.ReadAll(obj)
-		if err != nil {
-			a.logger.LogError(fmt.Sprintf("Unable to read object from local store: %s/%s", mparts[0], mparts[1]), err)
-			return
-		}
-
-		if _, err := wc.Write(bs); err != nil {
-			a.logger.LogError(fmt.Sprintf("Unable to write: %s/%s", a.bucket, mparts[1]), err)
-			return
-		}
-
-		if err = wc.Close(); err != nil {
-			a.logger.LogError("Write failure", err)
-			return
-		}
-
-		msg := &pubsub.Message{Data: []byte(fmt.Sprintf("%s/%s", mparts[0], mparts[1]))}
-
-		pr := a.pt.Publish(ctx, msg)
-		if _, err = pr.Get(ctx); err != nil {
-			a.logger.LogError(fmt.Sprintf("Could not send purge notification: %s", string(msg.Data)), err)
-			return
+		for _, label := range labels {
+			if strings.Contains(label, a.label) {
+				if err := writeToCloud(a.mc, a.sc, a.logger, a.bucket, bucket, object); err != nil {
+					a.logger.LogError("Cloud write failed", err)
+				}
+				return
+			}
 		}
 	})
 	if err != context.Canceled {
@@ -112,25 +90,78 @@ func (a Archiver) ReceiveAndProcess(ctx context.Context) {
 	}
 }
 
-func subscribe(pc *pubsub.Client, pid, topic string) (*pubsub.Subscription, error) {
-	sid := fmt.Sprintf("%s%%%s", pid, topic)
+func parseMessage(msg []byte) (string, string, []string, error) {
+	var df interface{}
+	err := json.Unmarshal(msg, &df)
+	if err != nil {
+		return "", "", []string{}, err
+	}
 
-	sub := pc.Subscription(sid)
+	location := df.(map[string]interface{})["Location"]
+	if location == nil || len(location.(string)) == 0 {
+		return "", "", []string{}, fmt.Errorf("empty location field")
+	}
+
+	labels := df.(map[string]interface{})["Labels"]
+	if labels == nil || len(labels.([]interface{})) == 0 {
+		return "", "", []string{}, fmt.Errorf("empty labels field")
+	}
+
+	locparts := strings.Split(location.(string), "/")
+	if len(locparts) != 2 {
+		return "", "", []string{}, fmt.Errorf("location must have format <bucket>/<object> [%s]", location.(string))
+	}
+
+	ls := []string{}
+	for _, l := range labels.([]interface{}) {
+		ls = append(ls, l.(string))
+	}
+
+	return locparts[0], locparts[1], ls, nil
+}
+
+func subscribe(pc *pubsub.Client, subcription, topic string) (*pubsub.Subscription, error) {
+	sub := pc.Subscription(subcription)
 
 	ok, err := sub.Exists(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to determine if subscription exists: %s [%+v]", sid, err)
+		return nil, err
 	}
 
 	if !ok {
-		sub, err = pc.CreateSubscription(ctx, sid, pubsub.SubscriptionConfig{
+		sub, err = pc.CreateSubscription(ctx, subcription, pubsub.SubscriptionConfig{
 			Topic:       pc.Topic(topic),
 			AckDeadline: 60 * time.Second,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("Subscription creation failed: %s [%v]", sid, err)
+			return nil, err
 		}
 	}
 
 	return sub, nil
+}
+
+func writeToCloud(mc *minio.Client, sc *storage.Client, logger *sdlog.StackdriverLogger, cb, lb, o string) error {
+	wc := sc.Bucket(cb).Object(o).NewWriter(ctx)
+	wc.ContentType = "application/octet-stream"
+
+	obj, err := mc.GetObject(lb, o)
+	if err != nil {
+		return err
+	}
+
+	bs, err := ioutil.ReadAll(obj)
+	if err != nil {
+		return err
+	}
+
+	if _, err := wc.Write(bs); err != nil {
+		return err
+	}
+
+	if err = wc.Close(); err != nil {
+		return err
+	}
+
+	return nil
 }
