@@ -1,4 +1,0 @@
-apiVersion: v1
-description: A Helm chart for Kubernetes that deploys a purging service
-name: purger
-version: 0.1.0

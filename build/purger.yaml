@@ -1,8 +1,0 @@
-steps:
-- name: 'gcr.io/cloud-builders/go'
-  args: ['install', '-ldflags', "'-w'", './cmd/purger']
-  env: ["PROJECT_ROOT=github.com/wkharold/fileup", "CGO_ENABLED=0", "GOOS=linux"]
-- name: 'gcr.io/cloud-builders/docker'
-  args: ['build', '--file', 'containers/Dockerfile.purger', '--tag=gcr.io/$PROJECT_ID/purger', '.']
-
-images: ['gcr.io/$PROJECT_ID/purger']
