@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	accessKeyIdEnvVar     = "MINIO_ACCESSKEYID"
+	accessKeyIDEnvVar     = "MINIO_ACCESSKEYID"
 	podNameEnvVar         = "POD_NAME"
 	secretAccessKeyEnvVar = "MINIO_SECRETKEY"
 
@@ -36,11 +36,11 @@ var (
 	labeledtopic   = flag.String("labeledtopic", "", "PubSub topic for labeled notifications (Required)")
 	bucket         = flag.String("bucket", "", "Cloud storage archive bucket (Required)")
 	filestore      = flag.String("filestore", "", "Endpoint for uploaded files (Required)")
-	projectid      = flag.String("projectid", "", "Project Id of the project hosting the application (Required)")
+	projectid      = flag.String("projectid", "", "Project ID of the project hosting the application (Required)")
 	serviceaccount = flag.String("serviceaccount", "", "Service account to use of publishing (Required)")
 	targetlabel    = flag.String("targetlabel", "cat", "Target label for images to archive")
 
-	accessKeyId     = cmd.MustGetenv(accessKeyIdEnvVar)
+	accessKeyID     = cmd.MustGetenv(accessKeyIDEnvVar)
 	podName         = cmd.MustGetenv(podNameEnvVar)
 	secretAccessKey = cmd.MustGetenv(secretAccessKeyEnvVar)
 
@@ -91,7 +91,7 @@ func main() {
 		log.Fatalf("unable to create Stackdriver logger [%+v]", err)
 	}
 
-	mc, err = minio.New(*filestore, accessKeyId, secretAccessKey, false)
+	mc, err = minio.New(*filestore, accessKeyID, secretAccessKey, false)
 	if err != nil {
 		log.Fatalf("unable to connect to file store: %+v\n", err)
 	}

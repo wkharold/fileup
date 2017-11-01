@@ -17,6 +17,10 @@ import (
 	"google.golang.org/api/option"
 )
 
+// A Receiver accepts image upload requests via HTTP. The images it
+// receives are stored in a local object store bucke where they can be accessed
+// by other services. A message is published on the receivers topic for
+// every image received.
 type Receiver struct {
 	bucket string
 	logger *sdlog.StackdriverLogger
@@ -32,6 +36,7 @@ var (
 	ctx = context.Background()
 )
 
+// purgeOldObjects deletes objects from the local store that are older than five minutes.
 func purgeOldObjects(mc *minio.Client, logger *sdlog.StackdriverLogger, bucket string) {
 	done := make(chan struct{})
 	defer close(done)
@@ -55,7 +60,10 @@ func purgeOldObjects(mc *minio.Client, logger *sdlog.StackdriverLogger, bucket s
 	}
 }
 
-func New(mc *minio.Client, bucket string, logger *sdlog.StackdriverLogger, projectId, serviceAccount, topic string) (*Receiver, error) {
+// New creates and initializes a Receiver. The receiver accepts image upload requests over HTTP and stores received
+// images in a local object store (minio). It uses the specified serviceAccount to publish image received notifications
+// to its pubsub topic.
+func New(mc *minio.Client, bucket string, logger *sdlog.StackdriverLogger, projectID, serviceAccount, topic string) (*Receiver, error) {
 	client, err := google.DefaultClient(ctx, iam.CloudPlatformScope, "https://www.googleapis.com/auth/iam")
 	if err != nil {
 		log.Fatalf("unable to get application default credentials: %+v\n", err)
@@ -67,9 +75,9 @@ func New(mc *minio.Client, bucket string, logger *sdlog.StackdriverLogger, proje
 		mc:     mc,
 	}
 
-	pc, err := pubsub.NewClient(ctx, projectId, option.WithTokenSource(oauth2.ReuseTokenSource(nil, satokensource.New(client, logger, projectId, serviceAccount))))
+	pc, err := pubsub.NewClient(ctx, projectID, option.WithTokenSource(oauth2.ReuseTokenSource(nil, satokensource.New(client, logger, projectID, serviceAccount))))
 	if err != nil {
-		logger.LogError(fmt.Sprintf("Unable to create PubSub client for project: %s", projectId), err)
+		logger.LogError(fmt.Sprintf("Unable to create PubSub client for project: %s", projectID), err)
 		return nil, err
 	}
 
@@ -99,6 +107,8 @@ func New(mc *minio.Client, bucket string, logger *sdlog.StackdriverLogger, proje
 	return receiver, nil
 }
 
+// ServeHTTP handles receiving the image file and writing it to the local (minio) object store.
+// Once the file is saved in the local object store a message is published to the image topic.
 func (r Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	file, header, err := req.FormFile("file")
 	if err != nil {
@@ -107,7 +117,7 @@ func (r Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		r.logger.LogError(msg, err)
 
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintln(w, "%s [%+v]", msg, err)
+		fmt.Fprintf(w, "%s [%+v]", msg, err)
 		return
 	}
 	defer file.Close()
@@ -119,7 +129,7 @@ func (r Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		r.logger.LogError(msg, err)
 
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, "%s [%+v]", msg, err)
+		fmt.Fprintf(w, "%s [%+v]", msg, err)
 		return
 	}
 	if n != header.Size {
@@ -129,7 +139,7 @@ func (r Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		r.logger.LogError(msg, err)
 
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, "%s [%+v]", msg, err)
+		fmt.Fprintf(w, "%s [%+v]", msg, err)
 		return
 	}
 

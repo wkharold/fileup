@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	accessKeyIdEnvVar     = "MINIO_ACCESSKEYID"
+	accessKeyIDEnvVar     = "MINIO_ACCESSKEYID"
 	bucketNameEnvVar      = "MINIO_BUCKET"
 	secretAccessKeyEnvVar = "MINIO_SECRETKEY"
 
@@ -36,10 +36,10 @@ var (
 	filestore      = flag.String("filestore", "", "Endpoint for uploaded files (Required)")
 	imagetopic     = flag.String("imagetopic", "images", "PubSub topic for new image notifications")
 	labeledtopic   = flag.String("labeledtopic", "labeled", "PubSub topic for new label notifications")
-	projectid      = flag.String("projectid", "", "Project Id of the project hosting the application (Required)")
+	projectid      = flag.String("projectid", "", "Project ID of the project hosting the application (Required)")
 	serviceaccount = flag.String("serviceaccount", "", "Service account to use of publishing (Required)")
 
-	accessKeyId     = cmd.MustGetenv(accessKeyIdEnvVar)
+	accessKeyID     = cmd.MustGetenv(accessKeyIDEnvVar)
 	bucket          = cmd.MustGetenv(bucketNameEnvVar)
 	secretAccessKey = cmd.MustGetenv(secretAccessKeyEnvVar)
 
@@ -89,7 +89,7 @@ func main() {
 		log.Fatalf("unable to create Stackdriver logger [%+v]", err)
 	}
 
-	mc, err = minio.New(*filestore, accessKeyId, secretAccessKey, false)
+	mc, err = minio.New(*filestore, accessKeyID, secretAccessKey, false)
 	if err != nil {
 		log.Fatalf("unable to connect to file store: %+v\n", err)
 	}

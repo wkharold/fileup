@@ -15,7 +15,7 @@ import (
 	iam "google.golang.org/api/iam/v1"
 )
 
-type AccessTokenClaimSet struct {
+type accessTokenClaimSet struct {
 	Iss   string `json:"iss"`
 	Scope string `json:"scope"`
 	Aud   string `json:"aud"`
@@ -23,10 +23,11 @@ type AccessTokenClaimSet struct {
 	Iat   int64  `json:"iat"`
 }
 
+// ServiceAccountTokenSource returns access tokens for the associated service account.
 type ServiceAccountTokenSource struct {
 	client         *http.Client
 	logger         *sdlog.StackdriverLogger
-	projectId      string
+	projectID      string
 	serviceAccount string
 }
 
@@ -39,11 +40,12 @@ var (
 	ctx = context.Background()
 )
 
-func New(client *http.Client, logger *sdlog.StackdriverLogger, projectId, serviceAccount string) *ServiceAccountTokenSource {
+// New creates and initializes a new ServiceAccountTokenSource.
+func New(client *http.Client, logger *sdlog.StackdriverLogger, projectID, serviceAccount string) *ServiceAccountTokenSource {
 	return &ServiceAccountTokenSource{
 		client:         client,
 		logger:         logger,
-		projectId:      projectId,
+		projectID:      projectID,
 		serviceAccount: serviceAccount,
 	}
 }
@@ -56,7 +58,7 @@ func createTokenRequest(client *http.Client, pid, sa string) (string, error) {
 
 	tnow := time.Now()
 
-	claims := &AccessTokenClaimSet{
+	claims := &accessTokenClaimSet{
 		Aud:   "https://www.googleapis.com/oauth2/v4/token",
 		Exp:   tnow.Add(time.Duration(5) * time.Minute).Unix(),
 		Iat:   tnow.Unix(),
@@ -122,8 +124,9 @@ func requestAccessToken(tokreq string) (*oauth2.Token, error) {
 	return &oauth2.Token{AccessToken: acctok.(string), Expiry: time.Now().Add(time.Duration(accessTokenTTL) * time.Minute)}, nil
 }
 
+// Token returns an OAuth2 access token for the service account associated with this token source.
 func (ts ServiceAccountTokenSource) Token() (*oauth2.Token, error) {
-	tokreq, err := createTokenRequest(ts.client, ts.projectId, ts.serviceAccount)
+	tokreq, err := createTokenRequest(ts.client, ts.projectID, ts.serviceAccount)
 	if err != nil {
 		ts.logger.LogError("Access token reqest creation failed", err)
 		return nil, err

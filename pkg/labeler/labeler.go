@@ -19,6 +19,9 @@ import (
 	vpb "google.golang.org/genproto/googleapis/cloud/vision/v1"
 )
 
+// A Labeler uses the Google Vision API to get the top three labels associated
+// the a given image. It posts a message associating those labels with the image
+// to its pubsub topic.
 type Labeler struct {
 	logger *sdlog.StackdriverLogger
 	iac    *vision.ImageAnnotatorClient
@@ -27,16 +30,19 @@ type Labeler struct {
 	sub    *pubsub.Subscription
 }
 
+// LabeledImage associates an image, located in the local store, with a set of labels.
 type LabeledImage struct {
-	Location string   `json:location`
-	Labels   []string `json:labels`
+	Location string   `json:"location"`
+	Labels   []string `json:"labels"`
 }
 
 var (
 	ctx = context.Background()
 )
 
-func New(logger *sdlog.StackdriverLogger, mc *minio.Client, projectId, serviceAccount, imageTopic, labeledTopic string) (*Labeler, error) {
+// New creates and initializes a Labeler. The labeler will use the specified serviceAccount
+// to subscribe to the imageTopic and publish to the labeledTopic.
+func New(logger *sdlog.StackdriverLogger, mc *minio.Client, projectID, serviceAccount, imageTopic, labeledTopic string) (*Labeler, error) {
 	client, err := google.DefaultClient(ctx, iam.CloudPlatformScope, "https://www.googleapis.com/auth/iam")
 	if err != nil {
 		return nil, err
@@ -47,14 +53,14 @@ func New(logger *sdlog.StackdriverLogger, mc *minio.Client, projectId, serviceAc
 		mc:     mc,
 	}
 
-	ts := option.WithTokenSource(oauth2.ReuseTokenSource(nil, satokensource.New(client, logger, projectId, serviceAccount)))
+	ts := option.WithTokenSource(oauth2.ReuseTokenSource(nil, satokensource.New(client, logger, projectID, serviceAccount)))
 
 	labeler.iac, err = vision.NewImageAnnotatorClient(ctx, ts)
 	if err != nil {
 		return nil, err
 	}
 
-	pc, err := pubsub.NewClient(ctx, projectId, ts)
+	pc, err := pubsub.NewClient(ctx, projectID, ts)
 	if err != nil {
 		return nil, err
 	}
@@ -81,6 +87,9 @@ func New(logger *sdlog.StackdriverLogger, mc *minio.Client, projectId, serviceAc
 	return labeler, nil
 }
 
+// ReceiveAndProcess responds to messages from the images topic by requesting the top three
+// labels for the image from the Google Vision API and then publishing a message associating
+// the image with those labels to the labeled topic.
 func (l Labeler) ReceiveAndProcess(ctx context.Context) {
 	err := l.sub.Receive(ctx, func(ctx context.Context, m *pubsub.Message) {
 		defer m.Ack()

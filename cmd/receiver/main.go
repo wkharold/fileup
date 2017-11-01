@@ -14,19 +14,8 @@ import (
 	"github.com/wkharold/fileup/pkg/sdlog"
 )
 
-type Env struct {
-	projectId      string
-	serviceAccount string
-	topic          string
-}
-
-type FileDesc struct {
-	Name string `json:"name"`
-	Size int64  `json:"size"`
-}
-
 const (
-	accessKeyIdEnvVar     = "MINIO_ACCESSKEYID"
+	accessKeyIDEnvVar     = "MINIO_ACCESSKEYID"
 	bucketNameEnvVar      = "MINIO_BUCKET"
 	secretAccessKeyEnvVar = "MINIO_SECRETKEY"
 
@@ -39,11 +28,11 @@ var (
 	ctx = context.Background()
 
 	filestore      = flag.String("filestore", "", "Endpoint for uploaded files (Required)")
-	projectid      = flag.String("projectid", "", "Project Id of the project hosting the application (Required)")
+	projectid      = flag.String("projectid", "", "Project ID of the project hosting the application (Required)")
 	serviceaccount = flag.String("serviceaccount", "", "Service account to use of publishing (Required)")
 	topic          = flag.String("topic", "", "PubSub topic for notifications (Required)")
 
-	accessKeyId     = cmd.MustGetenv(accessKeyIdEnvVar)
+	accessKeyID     = cmd.MustGetenv(accessKeyIDEnvVar)
 	bucket          = cmd.MustGetenv(bucketNameEnvVar)
 	secretAccessKey = cmd.MustGetenv(secretAccessKeyEnvVar)
 
@@ -98,7 +87,7 @@ func main() {
 		log.Fatalf("unable to create Stackdriver logger [%+v]", err)
 	}
 
-	mc, err = minio.New(*filestore, accessKeyId, secretAccessKey, false)
+	mc, err = minio.New(*filestore, accessKeyID, secretAccessKey, false)
 	if err != nil {
 		log.Fatalf("unable to connect to file store: %+v\n", err)
 	}

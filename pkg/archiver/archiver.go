@@ -20,6 +20,8 @@ import (
 	"google.golang.org/api/option"
 )
 
+// An Archiver compares its label to image labels it receives via pubsub.
+// If there is a match the labeled image is copied to cloud storage.
 type Archiver struct {
 	bucket string
 	label  string
@@ -33,7 +35,9 @@ var (
 	ctx = context.Background()
 )
 
-func New(logger *sdlog.StackdriverLogger, mc *minio.Client, projectId, serviceAccount, bucket, labeledTopic, subcription, targetlabel string) (*Archiver, error) {
+// New creates and initializes an Archiver. The archiver will use the specified serviceAccount
+// to subscribe to the labeledTopic and write to the cloud storage bucket.
+func New(logger *sdlog.StackdriverLogger, mc *minio.Client, projectID, serviceAccount, bucket, labeledTopic, subcription, targetlabel string) (*Archiver, error) {
 	client, err := google.DefaultClient(ctx, iam.CloudPlatformScope, "https://www.googleapis.com/auth/iam")
 	if err != nil {
 		return nil, err
@@ -46,14 +50,14 @@ func New(logger *sdlog.StackdriverLogger, mc *minio.Client, projectId, serviceAc
 		mc:     mc,
 	}
 
-	ts := option.WithTokenSource(oauth2.ReuseTokenSource(nil, satokensource.New(client, logger, projectId, serviceAccount)))
+	ts := option.WithTokenSource(oauth2.ReuseTokenSource(nil, satokensource.New(client, logger, projectID, serviceAccount)))
 
 	archiver.sc, err = storage.NewClient(ctx, ts)
 	if err != nil {
 		return nil, err
 	}
 
-	pc, err := pubsub.NewClient(ctx, projectId, ts)
+	pc, err := pubsub.NewClient(ctx, projectID, ts)
 	if err != nil {
 		return nil, err
 	}
@@ -65,6 +69,9 @@ func New(logger *sdlog.StackdriverLogger, mc *minio.Client, projectId, serviceAc
 	return archiver, nil
 }
 
+// ReceiveAndProcess responds to messages from the labeledTopic by comparing the
+// archiver's target label to each of the labels in the message. If there is a match
+// the associated image is copied to the archiver's cloud storage bucket.
 func (a Archiver) ReceiveAndProcess(ctx context.Context) {
 	err := a.sub.Receive(ctx, func(ctx context.Context, m *pubsub.Message) {
 		log.Printf("message data: %+v", string(m.Data))
@@ -97,12 +104,12 @@ func parseMessage(msg []byte) (string, string, []string, error) {
 		return "", "", []string{}, err
 	}
 
-	location := df.(map[string]interface{})["Location"]
+	location := df.(map[string]interface{})["location"]
 	if location == nil || len(location.(string)) == 0 {
 		return "", "", []string{}, fmt.Errorf("empty location field")
 	}
 
-	labels := df.(map[string]interface{})["Labels"]
+	labels := df.(map[string]interface{})["labels"]
 	if labels == nil || len(labels.([]interface{})) == 0 {
 		return "", "", []string{}, fmt.Errorf("empty labels field")
 	}
