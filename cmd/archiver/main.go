@@ -1,3 +1,4 @@
+// Implements the archiver microservice binary.
 package main
 
 import (

@@ -1,3 +1,11 @@
+// Package receiver provides the constructor and ServeHTTP method for the receiver microservice.
+// The receiver microservice is responsible for accepting image files from clients, saving them in
+// local (minio) object storage, and publishing an image receive message to its Google PubSub
+// topic.
+//
+// Each receiver instance of the receiver microservice creates its own local (minio) object storage
+// bucket. Old object are removed from the bucket every five minutes and the bucket is removed when
+// the instance terminates.
 package receiver
 
 import (

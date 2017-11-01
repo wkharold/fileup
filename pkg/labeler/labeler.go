@@ -1,3 +1,6 @@
+// Package labeler provides the constructor and ReceiveAndProcess method for the labeler microservice.
+// The labeler microservice is responsible for labeling images using the Google Vision API. It publishes
+// a message associating an image with its top three labels to its Google PubSub topic.
 package labeler
 
 import (

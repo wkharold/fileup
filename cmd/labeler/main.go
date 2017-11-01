@@ -1,3 +1,4 @@
+// Implements the labeler microservice binary.
 package main
 
 import (

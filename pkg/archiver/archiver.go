@@ -1,3 +1,6 @@
+// Package archiver provides the constructor and ReceiveAndProcess method for the archiver microservice.
+// The archiver microservice is responsible for copying images whose lables match its target lable to
+// Google Cloud Storage.
 package archiver
 
 import (

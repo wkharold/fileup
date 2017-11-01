@@ -1,3 +1,4 @@
+// Implements the receiver microservice binary.
 package main
 
 import (
